@@ -1,0 +1,120 @@
+// Prisma schema for the QA Management Application (SQLite for local dev).
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Employee {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  team      String?
+  role      String   @default("Team Member") // Admin | QA Lead | Call QA Analyst | Team Member
+  createdAt DateTime @default(now())
+
+  timeRecords     TimeUtilizationRecord[]
+  qaScores        QAScore[]             @relation("AgentScores")
+  evaluatedScores QAScore[]             @relation("Evaluator")
+  maintenance     MaintenanceActivity[]
+  callEvaluations CallQAEvaluation[]    @relation("Agent")
+  analyzedCalls   CallQAEvaluation[]    @relation("Analyst")
+}
+
+model TimeUtilizationRecord {
+  id                 String   @id @default(cuid())
+  employee           Employee @relation(fields: [employeeId], references: [id])
+  employeeId         String
+  period             String // e.g. 2026-06
+  plannedHours       Float
+  actualHours        Float
+  utilizationPercent Float
+  sourceFile         String?
+  uploadedAt         DateTime @default(now())
+
+  @@unique([employeeId, period])
+}
+
+model QAScore {
+  id                 String    @id @default(cuid())
+  agent              Employee  @relation("AgentScores", fields: [employeeId], references: [id])
+  employeeId         String
+  jiraTicketKey      String
+  timelinessScore    Float
+  documentationScore Float
+  totalScore         Float
+  evaluationDate     DateTime  @default(now())
+  period             String // YYYY-MM
+  evaluator          Employee? @relation("Evaluator", fields: [evaluatorId], references: [id])
+  evaluatorId        String?
+  comments           String?
+}
+
+model QAReport {
+  id            String   @id @default(cuid())
+  period        String
+  generatedAt   DateTime @default(now())
+  exportedToPMI Boolean  @default(false)
+  pmiReference  String?
+  payload       String // JSON string of the PMI export
+}
+
+model Joinee {
+  id        String    @id @default(cuid())
+  name      String
+  joinDate  DateTime
+  team      String?
+  mentor    String?
+  createdAt DateTime  @default(now())
+  topics    KTTopic[]
+}
+
+model KTTopic {
+  id            String    @id @default(cuid())
+  joinee        Joinee    @relation(fields: [joineeId], references: [id], onDelete: Cascade)
+  joineeId      String
+  topicName     String
+  status        String    @default("Pending") // Pending | Completed
+  completedDate DateTime?
+}
+
+model MaintenanceActivity {
+  id                String   @id @default(cuid())
+  title             String
+  employee          Employee @relation(fields: [employeeId], references: [id])
+  employeeId        String
+  scheduledStart    DateTime
+  scheduledEnd      DateTime
+  actualStart       DateTime
+  actualEnd         DateTime
+  status            String // WithinTime | Exceeded
+  exceededByMinutes Int      @default(0)
+  month             String // YYYY-MM
+  createdAt         DateTime @default(now())
+}
+
+model CallQAEvaluation {
+  id                   String    @id @default(cuid())
+  agent                Employee  @relation("Agent", fields: [employeeId], references: [id])
+  employeeId           String
+  callReference        String
+  callDate             DateTime
+  analyst              Employee? @relation("Analyst", fields: [analystId], references: [id])
+  analystId            String?
+  callOpeningScore     Float
+  infoCapturedScore    Float
+  deadAirScore         Float
+  deadAirIncidents     Int       @default(0)
+  callClosingScore     Float
+  caseCreationTimeSecs Int
+  caseCreationBreached Boolean   @default(false)
+  callCloseTimeSecs    Int
+  callCloseBreached    Boolean   @default(false)
+  totalScore           Float
+  period               String // YYYY-MM
+  comments             String?
+  createdAt            DateTime  @default(now())
+}
