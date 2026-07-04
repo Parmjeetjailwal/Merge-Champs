@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { config } from '../src/config';
 import {
   computeUtilizationPercent,
@@ -21,7 +22,11 @@ async function main() {
   await prisma.qAReport.deleteMany();
   await prisma.kTTopic.deleteMany();
   await prisma.joinee.deleteMany();
+  await prisma.kTTemplateTopic.deleteMany();
+  await prisma.kTTemplate.deleteMany();
   await prisma.timeUtilizationRecord.deleteMany();
+  await prisma.user.deleteMany();
+  await prisma.appSetting.deleteMany();
   await prisma.employee.deleteMany();
 
   // --- Employees ---
@@ -108,7 +113,7 @@ async function main() {
       joinDate: new Date('2026-06-15T00:00:00'),
       team: 'QA',
       mentor: 'Eva Novak',
-      topics: { create: topicsA.map((t, i) => ({ topicName: t, status: i < 3 ? 'Completed' : 'Pending', completedDate: i < 3 ? new Date('2026-06-20T00:00:00') : null })) },
+      topics: { create: topicsA.map((t, i) => ({ topicName: t, status: i < 3 ? 'Completed' : 'Pending', completedDate: i < 3 ? new Date('2026-06-20T00:00:00') : null, targetDate: i < 3 ? null : new Date(i === 3 ? '2026-06-25T00:00:00' : '2026-07-20T00:00:00') })) },
     },
   });
   const topicsB = ['Product Domain', 'Support Tooling', 'Escalation Matrix', 'KB Documentation'];
@@ -118,7 +123,7 @@ async function main() {
       joinDate: new Date('2026-06-28T00:00:00'),
       team: 'Support',
       mentor: 'Faisal Khan',
-      topics: { create: topicsB.map((t, i) => ({ topicName: t, status: i < 1 ? 'Completed' : 'Pending', completedDate: i < 1 ? new Date('2026-07-01T00:00:00') : null })) },
+      topics: { create: topicsB.map((t, i) => ({ topicName: t, status: i < 1 ? 'Completed' : 'Pending', completedDate: i < 1 ? new Date('2026-07-01T00:00:00') : null, targetDate: i < 1 ? null : new Date(i === 1 ? '2026-06-30T00:00:00' : '2026-07-25T00:00:00') })) },
     },
   });
   void joineeA;
@@ -188,6 +193,30 @@ async function main() {
       },
     });
   }
+
+  // --- Users (for JWT login) ---
+  const hash = (p: string) => bcrypt.hashSync(p, 10);
+  await prisma.user.createMany({
+    data: [
+      { email: 'admin@example.com', passwordHash: hash('admin123'), role: 'Admin' },
+      { email: 'qalead@example.com', passwordHash: hash('qalead123'), role: 'QA Lead' },
+      { email: 'analyst@example.com', passwordHash: hash('analyst123'), role: 'Call QA Analyst' },
+      { email: 'member@example.com', passwordHash: hash('member123'), role: 'Team Member' },
+    ],
+  });
+
+  // --- KT template ---
+  await prisma.kTTemplate.create({
+    data: {
+      name: 'Standard QA Onboarding',
+      team: 'QA',
+      topics: {
+        create: ['Codebase Overview', 'CI/CD Pipeline', 'Ticketing Workflow', 'Release Process', 'On-call Process'].map(
+          (t) => ({ topicName: t })
+        ),
+      },
+    },
+  });
 
   // eslint-disable-next-line no-console
   console.log('Seed complete:', {

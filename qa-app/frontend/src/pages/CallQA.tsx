@@ -2,35 +2,42 @@ import { useEffect, useState } from 'react';
 import { api, apiError } from '../api';
 import { useRole } from '../RoleContext';
 import { can } from '../perms';
-import type { CallQaView, Employee } from '../types';
+import { useToast } from '../ui/Toast';
+import { useConfirm } from '../ui/Confirm';
+import { DataTable } from '../ui/DataTable';
+import type { CallEvaluation, CallQaView, Employee } from '../types';
 
 function currentMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+const defaultForm = () => ({
+  employeeId: '',
+  callReference: '',
+  callDate: `${currentMonth()}-15`,
+  callOpeningScore: 5,
+  infoCapturedScore: 5,
+  deadAirScore: 5,
+  callClosingScore: 5,
+  deadAirIncidents: 0,
+  caseCreationTimeSecs: 90,
+  callCloseTimeSecs: 40,
+  comments: '',
+});
+
 export function CallQA() {
   const { role } = useRole();
   const editable = can.callQa(role);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [periods, setPeriods] = useState<string[]>([]);
   const [period, setPeriod] = useState<string>('');
   const [view, setView] = useState<CallQaView | null>(null);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-  const [form, setForm] = useState({
-    employeeId: '',
-    callReference: '',
-    callDate: `${currentMonth()}-15`,
-    callOpeningScore: 5,
-    infoCapturedScore: 5,
-    deadAirScore: 5,
-    callClosingScore: 5,
-    deadAirIncidents: 0,
-    caseCreationTimeSecs: 90,
-    callCloseTimeSecs: 40,
-    comments: '',
-  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState(defaultForm());
 
   const load = (p?: string) => {
     setError('');
@@ -49,23 +56,70 @@ export function CallQA() {
     load();
   }, []);
 
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(defaultForm());
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setMessage('');
     if (!form.employeeId || !form.callReference) {
       setError('Agent and call reference are required.');
       return;
     }
     try {
-      await api.post('/call-qa', form);
-      setMessage('Call evaluation saved.');
-      setForm({ ...form, callReference: '', comments: '' });
+      if (editingId) {
+        await api.patch(`/call-qa/${editingId}`, form);
+        toast.success('Evaluation updated.');
+      } else {
+        await api.post('/call-qa', form);
+        toast.success('Call evaluation saved.');
+      }
+      resetForm();
       const p = await api.get<string[]>('/call-qa/periods');
       setPeriods(p.data);
       load(form.callDate.slice(0, 7));
     } catch (err) {
-      setError(apiError(err));
+      const msg = apiError(err);
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
+  const startEdit = (ev: CallEvaluation) => {
+    setEditingId(ev.id);
+    setForm({
+      employeeId: ev.employeeId,
+      callReference: ev.callReference,
+      callDate: ev.callDate.slice(0, 10),
+      callOpeningScore: ev.callOpeningScore,
+      infoCapturedScore: ev.infoCapturedScore,
+      deadAirScore: ev.deadAirScore,
+      callClosingScore: ev.callClosingScore,
+      deadAirIncidents: ev.deadAirIncidents,
+      caseCreationTimeSecs: ev.caseCreationTimeSecs,
+      callCloseTimeSecs: ev.callCloseTimeSecs,
+      comments: ev.comments ?? '',
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const remove = async (ev: CallEvaluation) => {
+    const ok = await confirm({
+      title: 'Delete evaluation',
+      message: `Delete evaluation ${ev.callReference} (${ev.agent.name})?`,
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/call-qa/${ev.id}`);
+      toast.success('Evaluation deleted.');
+      if (editingId === ev.id) resetForm();
+      load(period);
+    } catch (err) {
+      toast.error(apiError(err));
     }
   };
 
@@ -102,7 +156,6 @@ export function CallQA() {
       </div>
 
       {error && <div className="notice error">{error}</div>}
-      {message && <div className="notice success">{message}</div>}
 
       <div className="grid grid-2" style={{ marginBottom: 18 }}>
         <div className="card">
@@ -141,12 +194,12 @@ export function CallQA() {
 
       {editable && (
         <div className="card no-print" style={{ marginBottom: 18 }}>
-          <h3>Add call evaluation</h3>
+          <h3>{editingId ? 'Edit call evaluation' : 'Add call evaluation'}</h3>
           <form className="stack" onSubmit={submit}>
             <div className="row">
               <label className="field">
                 Agent
-                <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+                <select value={form.employeeId} disabled={!!editingId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
                   <option value="">Select…</option>
                   {employees.map((e) => (
                     <option key={e.id} value={e.id}>
@@ -249,58 +302,72 @@ export function CallQA() {
               Comments
               <input value={form.comments} onChange={(e) => setForm({ ...form, comments: e.target.value })} />
             </label>
-            <button className="btn" type="submit">
-              Save evaluation
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn" type="submit">
+                {editingId ? 'Update evaluation' : 'Save evaluation'}
+              </button>
+              {editingId && (
+                <button type="button" className="btn secondary" onClick={resetForm}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </div>
       )}
 
       <div className="card">
         <h3>Evaluations — {period || '—'}</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Call</th>
-              <th>Agent</th>
-              <th className="right">Open</th>
-              <th className="right">Info</th>
-              <th className="right">Dead air</th>
-              <th className="right">Close</th>
-              <th className="right">Case time</th>
-              <th className="right">Close time</th>
-              <th className="right">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(view?.evaluations ?? []).map((e) => (
-              <tr key={e.id}>
-                <td className="mono">{e.callReference}</td>
-                <td>{e.agent.name}</td>
-                <td className="right mono">{e.callOpeningScore}</td>
-                <td className="right mono">{e.infoCapturedScore}</td>
-                <td className="right mono">{e.deadAirScore}</td>
-                <td className="right mono">{e.callClosingScore}</td>
-                <td className="right mono">
+        <DataTable
+          rows={view?.evaluations ?? []}
+          rowKey={(e) => e.id}
+          emptyText="No evaluations for this period."
+          columns={[
+            { key: 'call', header: 'Call', value: (e) => e.callReference },
+            { key: 'agent', header: 'Agent', value: (e) => e.agent.name },
+            { key: 'open', header: 'Open', align: 'right', value: (e) => e.callOpeningScore },
+            { key: 'info', header: 'Info', align: 'right', value: (e) => e.infoCapturedScore },
+            { key: 'deadair', header: 'Dead air', align: 'right', value: (e) => e.deadAirScore },
+            { key: 'close', header: 'Close', align: 'right', value: (e) => e.callClosingScore },
+            {
+              key: 'casetime',
+              header: 'Case time',
+              align: 'right',
+              value: (e) => e.caseCreationTimeSecs,
+              render: (e) => (
+                <>
                   {e.caseCreationTimeSecs}s{e.caseCreationBreached && <span className="badge bad">!</span>}
-                </td>
-                <td className="right mono">
+                </>
+              ),
+            },
+            {
+              key: 'closetime',
+              header: 'Close time',
+              align: 'right',
+              value: (e) => e.callCloseTimeSecs,
+              render: (e) => (
+                <>
                   {e.callCloseTimeSecs}s{e.callCloseBreached && <span className="badge bad">!</span>}
-                </td>
-                <td className="right mono">
-                  <b>{e.totalScore}</b>
-                </td>
-              </tr>
-            ))}
-            {(view?.evaluations ?? []).length === 0 && (
-              <tr>
-                <td colSpan={9} className="muted">
-                  No evaluations for this period.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                </>
+              ),
+            },
+            { key: 'total', header: 'Total', align: 'right', value: (e) => e.totalScore, render: (e) => <b>{e.totalScore}</b> },
+          ]}
+          actions={
+            editable
+              ? (e) => (
+                  <span className="row-actions">
+                    <button className="btn secondary icon" onClick={() => startEdit(e)}>
+                      Edit
+                    </button>
+                    <button className="btn danger icon" onClick={() => remove(e)}>
+                      Delete
+                    </button>
+                  </span>
+                )
+              : undefined
+          }
+        />
       </div>
     </div>
   );

@@ -3,15 +3,27 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { api, apiError } from '../api';
 import { useRole } from '../RoleContext';
 import { can } from '../perms';
-import type { TimeView } from '../types';
+import { useToast } from '../ui/Toast';
+import { useConfirm } from '../ui/Confirm';
+import { DataTable } from '../ui/DataTable';
+import { TrendChart } from '../ui/TrendChart';
+import type { Employee, TimeRecord, TimeView, TrendPoint } from '../types';
 
 export function TimeUtilization() {
   const { role } = useRole();
+  const editable = can.uploadTime(role);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [periods, setPeriods] = useState<string[]>([]);
   const [period, setPeriod] = useState<string>('');
   const [view, setView] = useState<TimeView | null>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [manual, setManual] = useState({ employeeId: '', period: '', plannedHours: 160, actualHours: 150 });
+  const [target, setTarget] = useState(85);
+  const [trend, setTrend] = useState<TrendPoint[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = (p?: string) => {
@@ -27,6 +39,12 @@ export function TimeUtilization() {
 
   useEffect(() => {
     api.get<string[]>('/time-utilization/periods').then((r) => setPeriods(r.data));
+    api.get<Employee[]>('/employees').then((r) => setEmployees(r.data));
+    api
+      .get<{ timeUtilization: { targetPercent: number } }>('/settings')
+      .then((r) => setTarget(r.data.timeUtilization.targetPercent))
+      .catch(() => {});
+    api.get<TrendPoint[]>('/time-utilization/trend').then((r) => setTrend(r.data)).catch(() => {});
     load();
   }, []);
 
@@ -54,6 +72,66 @@ export function TimeUtilization() {
       if (fileRef.current) fileRef.current.value = '';
     } catch (err) {
       setError(apiError(err));
+    }
+  };
+
+  const resetManual = () => {
+    setEditingId(null);
+    setManual({ employeeId: '', period: period || '', plannedHours: 160, actualHours: 150 });
+  };
+
+  const submitManual = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const wasEditing = editingId;
+    try {
+      if (wasEditing) {
+        await api.patch(`/time-utilization/${wasEditing}`, {
+          plannedHours: manual.plannedHours,
+          actualHours: manual.actualHours,
+        });
+        toast.success('Record updated.');
+      } else {
+        if (!manual.employeeId || !manual.period) {
+          setError('Employee and period are required.');
+          return;
+        }
+        await api.post('/time-utilization', manual);
+        toast.success('Record saved.');
+      }
+      const targetPeriod = wasEditing ? period : manual.period;
+      resetManual();
+      const periodsRes = await api.get<string[]>('/time-utilization/periods');
+      setPeriods(periodsRes.data);
+      load(targetPeriod);
+    } catch (err) {
+      const msg = apiError(err);
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
+  const startEdit = (r: TimeRecord) => {
+    setEditingId(r.id);
+    setManual({ employeeId: r.employeeId, period: r.period, plannedHours: r.plannedHours, actualHours: r.actualHours });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const removeRecord = async (r: TimeRecord) => {
+    const ok = await confirm({
+      title: 'Delete record',
+      message: `Delete ${r.employee.name}'s record for ${r.period}?`,
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/time-utilization/${r.id}`);
+      toast.success('Record deleted.');
+      if (editingId === r.id) resetManual();
+      load(period);
+    } catch (err) {
+      toast.error(apiError(err));
     }
   };
 
@@ -104,6 +182,70 @@ export function TimeUtilization() {
         </div>
       )}
 
+      {editable && (
+        <div className="card no-print" style={{ marginBottom: 18 }}>
+          <h3>{editingId ? 'Edit record' : 'Add record manually'}</h3>
+          <form className="stack" onSubmit={submitManual}>
+            <div className="row">
+              <label className="field">
+                Employee
+                <select
+                  value={manual.employeeId}
+                  disabled={!!editingId}
+                  onChange={(e) => setManual({ ...manual, employeeId: e.target.value })}
+                >
+                  <option value="">Select…</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                Period (YYYY-MM)
+                <input
+                  value={manual.period}
+                  disabled={!!editingId}
+                  onChange={(e) => setManual({ ...manual, period: e.target.value })}
+                  placeholder="2026-07"
+                />
+              </label>
+            </div>
+            <div className="row">
+              <label className="field">
+                Planned hours
+                <input
+                  type="number"
+                  min={0}
+                  value={manual.plannedHours}
+                  onChange={(e) => setManual({ ...manual, plannedHours: Number(e.target.value) })}
+                />
+              </label>
+              <label className="field">
+                Actual/billable hours
+                <input
+                  type="number"
+                  min={0}
+                  value={manual.actualHours}
+                  onChange={(e) => setManual({ ...manual, actualHours: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn" type="submit">
+                {editingId ? 'Update record' : 'Add record'}
+              </button>
+              {editingId && (
+                <button type="button" className="btn secondary" onClick={resetManual}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      )}
+
       {view && view.records.length > 0 ? (
         <div className="grid grid-2">
           <div className="card">
@@ -120,33 +262,62 @@ export function TimeUtilization() {
           </div>
           <div className="card">
             <h3>Records</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th className="right">Planned</th>
-                  <th className="right">Actual</th>
-                  <th className="right">Util %</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {view.records.map((r) => (
-                  <tr key={r.id} className={ids.top.has(r.id) || ids.bottom.has(r.id) ? 'highlight-row' : ''}>
-                    <td>{r.employee.name}</td>
-                    <td className="right mono">{r.plannedHours}</td>
-                    <td className="right mono">{r.actualHours}</td>
-                    <td className="right mono">
-                      <b>{r.utilizationPercent}%</b>
-                    </td>
-                    <td>
+            <DataTable
+              rows={view.records}
+              rowKey={(r) => r.id}
+              rowClassName={(r) => (ids.top.has(r.id) || ids.bottom.has(r.id) ? 'highlight-row' : '')}
+              emptyText="No records for this period."
+              columns={[
+                { key: 'employee', header: 'Employee', value: (r) => r.employee.name },
+                { key: 'planned', header: 'Planned', align: 'right', value: (r) => r.plannedHours },
+                { key: 'actual', header: 'Actual', align: 'right', value: (r) => r.actualHours },
+                {
+                  key: 'util',
+                  header: 'Util %',
+                  align: 'right',
+                  value: (r) => r.utilizationPercent,
+                  render: (r) => {
+                    const c =
+                      r.utilizationPercent >= target
+                        ? 'var(--good)'
+                        : r.utilizationPercent >= target - 10
+                        ? 'var(--warn)'
+                        : 'var(--bad)';
+                    return <b style={{ color: c }}>{r.utilizationPercent}%</b>;
+                  },
+                },
+                {
+                  key: 'flag',
+                  header: '',
+                  sortable: false,
+                  searchable: false,
+                  render: (r) => (
+                    <>
                       {ids.top.has(r.id) && <span className="badge top">TOP</span>}
                       {ids.bottom.has(r.id) && <span className="badge warn">LOW</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </>
+                  ),
+                },
+              ]}
+              actions={
+                editable
+                  ? (r) => (
+                      <span className="row-actions">
+                        <button className="btn secondary icon" onClick={() => startEdit(r)}>
+                          Edit
+                        </button>
+                        <button className="btn danger icon" onClick={() => removeRecord(r)}>
+                          Delete
+                        </button>
+                      </span>
+                    )
+                  : undefined
+              }
+            />
+          </div>
+          <div className="card">
+            <h3>Utilization trend</h3>
+            <TrendChart data={trend} color="#2563eb" />
           </div>
         </div>
       ) : (

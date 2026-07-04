@@ -59,11 +59,22 @@ export interface QAReport {
   payload: { reportId: string; period: string; generatedAt: string; teamMembers: QAReportMember[] };
 }
 
+export interface QAReportSummary {
+  id: string;
+  period: string;
+  generatedAt: string;
+  exportedToPMI: boolean;
+  pmiReference: string | null;
+}
+
 export interface KTTopic {
   id: string;
   topicName: string;
   status: 'Completed' | 'Pending';
   completedDate: string | null;
+  targetDate: string | null;
+  notes: string | null;
+  signedOffBy: string | null;
 }
 
 export interface Joinee {
@@ -73,7 +84,7 @@ export interface Joinee {
   team: string | null;
   mentor: string | null;
   topics: KTTopic[];
-  progress: { completed: number; total: number; percent: number };
+  progress: { completed: number; total: number; percent: number; overdue: number };
 }
 
 export interface MaintenanceActivity {
@@ -133,16 +144,60 @@ export interface CallQaView {
 
 export interface DashboardData {
   period: string;
-  timeUtilization: { top: TimeRecord[]; bottom: TimeRecord[]; count: number };
+  previousPeriod: string;
+  deltas: { utilization: number; qa: number; callQa: number; maintenanceOnTime: number };
+  timeUtilization: { top: TimeRecord[]; bottom: TimeRecord[]; count: number; averageUtilization: number; target: number };
   qa: { averageScore: number; members: { employeeId: string; name: string; avgTotalScore: number; ticketsEvaluated: number }[] };
   kt: { joinees: { id: string; name: string; completed: number; total: number; percent: number }[] };
   maintenance: {
     topMaintainer: { employeeId: string; name: string; count: number } | null;
     missedTimeline: { employeeId: string; name: string; exceededCount: number }[];
+    onTimePercent: number;
   };
   callQa: {
     averageScore: number;
     topImprovementArea: { key: string; label: string; avg: number } | null;
     perAgent: { employeeId: string; name: string; evaluations: number; avgScore: number }[];
   };
+  alerts: {
+    belowTarget: { target: number; employees: { name: string; utilizationPercent: number }[] };
+    overdueKT: { joinee: string; topic: string }[];
+    repeatMissers: { employeeId: string; name: string; exceededCount: number }[];
+    callBreaches: number;
+  };
+}
+
+export interface AppConfig {
+  qa: { scaleMax: number; timeliness: number; documentation: number };
+  callQa: {
+    scaleMax: number;
+    opening: number;
+    info: number;
+    deadAir: number;
+    closing: number;
+    caseCreationThresholdSecs: number;
+    callCloseThresholdSecs: number;
+  };
+  timeUtilization: { targetPercent: number };
+  pmi: { includeCallScores: boolean };
+}
+
+export interface UserRow {
+  id: string;
+  email: string;
+  role: string;
+  employeeId: string | null;
+  createdAt: string;
+}
+
+export interface TrendPoint {
+  period: string;
+  value: number;
+}
+
+export interface KTTemplate {
+  id: string;
+  name: string;
+  team: string | null;
+  topics: { id: string; topicName: string }[];
 }

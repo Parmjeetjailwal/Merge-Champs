@@ -4,6 +4,8 @@ import { config } from '../config';
 import { asyncHandler } from '../lib/asyncHandler';
 import { requireRole } from '../middleware/roles';
 import { computeQaTotal, round2, toPeriod } from '../lib/calc';
+import { getSettings } from '../settings';
+import PDFDocument from 'pdfkit';
 
 export const qaScoresRouter = Router();
 
@@ -14,6 +16,7 @@ export interface QaMemberSummary {
   avgTimeliness: number;
   avgDocumentation: number;
   avgTotalScore: number;
+  avgCallScore?: number;
   tickets: {
     jiraTicketKey: string;
     timelinessScore: number;
@@ -76,6 +79,22 @@ export async function buildQaReportPayload(period: string): Promise<QaReportPayl
   });
   teamMembers.sort((a, b) => a.name.localeCompare(b.name));
 
+  const settings = await getSettings();
+  if (settings.pmi.includeCallScores) {
+    const calls = await prisma.callQAEvaluation.findMany({ where: { period } });
+    const byAgent = new Map<string, { sum: number; n: number }>();
+    for (const c of calls) {
+      const g = byAgent.get(c.employeeId) ?? { sum: 0, n: 0 };
+      g.sum += c.totalScore;
+      g.n++;
+      byAgent.set(c.employeeId, g);
+    }
+    for (const m of teamMembers) {
+      const g = byAgent.get(m.employeeId);
+      if (g) m.avgCallScore = round2(g.sum / g.n);
+    }
+  }
+
   return { reportId: null, period, generatedAt: new Date().toISOString(), teamMembers };
 }
 
@@ -106,12 +125,33 @@ qaScoresRouter.get(
   })
 );
 
+// GET /api/qa-scores/trend -> avg total score per period (last 12)
+qaScoresRouter.get(
+  '/trend',
+  asyncHandler(async (_req, res) => {
+    const scores = await prisma.qAScore.findMany({ orderBy: { period: 'asc' } });
+    const byPeriod = new Map<string, { sum: number; n: number }>();
+    for (const s of scores) {
+      const g = byPeriod.get(s.period) ?? { sum: 0, n: 0 };
+      g.sum += s.totalScore;
+      g.n++;
+      byPeriod.set(s.period, g);
+    }
+    const trend = [...byPeriod.entries()]
+      .map(([period, g]) => ({ period, value: round2(g.sum / g.n) }))
+      .sort((a, b) => a.period.localeCompare(b.period))
+      .slice(-12);
+    res.json(trend);
+  })
+);
+
 // POST /api/qa-scores  (single object or array)
 qaScoresRouter.post(
   '/',
   requireRole('Admin', 'QA Lead'),
   asyncHandler(async (req, res) => {
     const body = Array.isArray(req.body) ? req.body : [req.body];
+    const settings = await getSettings();
     const created = [];
     for (const item of body) {
       const { employeeId, jiraTicketKey, timelinessScore, documentationScore, evaluationDate, evaluatorId, comments } =
@@ -125,7 +165,7 @@ qaScoresRouter.post(
         return res.status(400).json({ error: 'timelinessScore and documentationScore must be numbers.' });
       }
       const evalDate = evaluationDate ? new Date(evaluationDate) : new Date();
-      const totalScore = computeQaTotal(t, d, config.qa);
+      const totalScore = computeQaTotal(t, d, settings.qa);
       const score = await prisma.qAScore.create({
         data: {
           employeeId,
@@ -146,11 +186,55 @@ qaScoresRouter.post(
   })
 );
 
+// PATCH /api/qa-scores/:id  -> edit a score (recomputes total + period)
+qaScoresRouter.patch(
+  '/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const existing = await prisma.qAScore.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Score not found.' });
+    const { jiraTicketKey, timelinessScore, documentationScore, evaluationDate, comments } = req.body ?? {};
+    const t = timelinessScore === undefined || timelinessScore === '' ? existing.timelinessScore : Number(timelinessScore);
+    const d =
+      documentationScore === undefined || documentationScore === '' ? existing.documentationScore : Number(documentationScore);
+    if (!Number.isFinite(t) || !Number.isFinite(d)) {
+      return res.status(400).json({ error: 'timelinessScore and documentationScore must be numbers.' });
+    }
+    const evalDate = evaluationDate ? new Date(evaluationDate) : existing.evaluationDate;
+    const settings = await getSettings();
+    const updated = await prisma.qAScore.update({
+      where: { id: existing.id },
+      data: {
+        jiraTicketKey: jiraTicketKey ?? existing.jiraTicketKey,
+        timelinessScore: t,
+        documentationScore: d,
+        totalScore: computeQaTotal(t, d, settings.qa),
+        evaluationDate: evalDate,
+        period: toPeriod(evalDate),
+        comments: comments ?? existing.comments,
+      },
+      include: { agent: true },
+    });
+    res.json(updated);
+  })
+);
+
+// DELETE /api/qa-scores/:id
+qaScoresRouter.delete(
+  '/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    await prisma.qAScore.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  })
+);
+
 // GET /api/qa-scores/report?period=YYYY-MM  -> builds + persists a report
 qaScoresRouter.get(
   '/report',
   asyncHandler(async (req, res) => {
     const period = req.query.period ? String(req.query.period) : toPeriod(new Date());
+    const settings = await getSettings();
     const payload = await buildQaReportPayload(period);
     const report = await prisma.qAReport.create({
       data: { period, payload: JSON.stringify(payload) },
@@ -159,7 +243,7 @@ qaScoresRouter.get(
     res.json({
       reportId: report.id,
       exportedToPMI: report.exportedToPMI,
-      weighting: { timeliness: config.qa.timeliness, documentation: config.qa.documentation, scaleMax: config.qa.scaleMax },
+      weighting: { timeliness: settings.qa.timeliness, documentation: settings.qa.documentation, scaleMax: settings.qa.scaleMax },
       payload,
     });
   })
@@ -178,6 +262,36 @@ qaScoresRouter.get(
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="qa-report-${period}.csv"`);
     res.send([header, ...lines].join('\n'));
+  })
+);
+
+// GET /api/qa-scores/report/export.pdf?period=YYYY-MM
+qaScoresRouter.get(
+  '/report/export.pdf',
+  asyncHandler(async (req, res) => {
+    const period = req.query.period ? String(req.query.period) : toPeriod(new Date());
+    const payload = await buildQaReportPayload(period);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="qa-report-${period}.pdf"`);
+    const doc = new PDFDocument({ margin: 44, size: 'A4' });
+    doc.pipe(res);
+    doc.fontSize(20).fillColor('#111').text(`QA Report`);
+    doc.fontSize(12).fillColor('#2563eb').text(`Period ${period}`);
+    doc.moveDown(0.3);
+    doc.fontSize(9).fillColor('#666').text(`Generated ${new Date().toLocaleString()}`);
+    doc.moveDown();
+    if (payload.teamMembers.length === 0) {
+      doc.fillColor('#000').fontSize(12).text('No data for this period.');
+    }
+    payload.teamMembers.forEach((m) => {
+      doc.fillColor('#111').fontSize(13).text(m.name);
+      const line = `Tickets ${m.ticketsEvaluated}  ·  Avg timeliness ${m.avgTimeliness}  ·  Avg documentation ${m.avgDocumentation}  ·  Avg total ${m.avgTotalScore}${
+        m.avgCallScore !== undefined ? `  ·  Avg call ${m.avgCallScore}` : ''
+      }`;
+      doc.fillColor('#444').fontSize(10).text(line);
+      doc.moveDown(0.6);
+    });
+    doc.end();
   })
 );
 
@@ -217,5 +331,17 @@ qaScoresRouter.post(
         ? 'Report POSTed to PMI_API_URL.'
         : 'PMI_API_URL not configured — report marked as exported and available as JSON/CSV.',
     });
+  })
+);
+
+// GET /api/qa-scores/reports  -> saved report history
+qaScoresRouter.get(
+  '/reports',
+  asyncHandler(async (_req, res) => {
+    const reports = await prisma.qAReport.findMany({
+      orderBy: { generatedAt: 'desc' },
+      select: { id: true, period: true, generatedAt: true, exportedToPMI: true, pmiReference: true },
+    });
+    res.json(reports);
   })
 );

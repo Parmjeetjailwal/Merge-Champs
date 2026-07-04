@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import { prisma } from '../db';
 import { asyncHandler } from '../lib/asyncHandler';
 import { requireRole } from '../middleware/roles';
-import { computeUtilizationPercent, pickN } from '../lib/calc';
+import { computeUtilizationPercent, pickN, round2 } from '../lib/calc';
 
 export const timeUtilizationRouter = Router();
 
@@ -61,6 +61,26 @@ timeUtilizationRouter.get(
       orderBy: { period: 'desc' },
     });
     res.json(rows.map((r) => r.period));
+  })
+);
+
+// GET /api/time-utilization/trend -> avg utilization per period (last 12)
+timeUtilizationRouter.get(
+  '/trend',
+  asyncHandler(async (_req, res) => {
+    const records = await prisma.timeUtilizationRecord.findMany({ orderBy: { period: 'asc' } });
+    const byPeriod = new Map<string, { sum: number; n: number }>();
+    for (const r of records) {
+      const g = byPeriod.get(r.period) ?? { sum: 0, n: 0 };
+      g.sum += r.utilizationPercent;
+      g.n++;
+      byPeriod.set(r.period, g);
+    }
+    const trend = [...byPeriod.entries()]
+      .map(([period, g]) => ({ period, value: round2(g.sum / g.n) }))
+      .sort((a, b) => a.period.localeCompare(b.period))
+      .slice(-12);
+    res.json(trend);
   })
 );
 
@@ -177,5 +197,58 @@ timeUtilizationRouter.post(
       totalRows: rows.length,
       view: await buildPeriodView(latestPeriod),
     });
+  })
+);
+
+// POST /api/time-utilization  -> manually add/replace a single record
+timeUtilizationRouter.post(
+  '/',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const { employeeId, period, plannedHours, actualHours } = req.body ?? {};
+    const planned = Number(plannedHours);
+    const actual = Number(actualHours);
+    if (!employeeId || !period || !Number.isFinite(planned) || !Number.isFinite(actual)) {
+      return res.status(400).json({ error: 'employeeId, period, plannedHours and actualHours are required.' });
+    }
+    const utilizationPercent = computeUtilizationPercent(planned, actual);
+    const record = await prisma.timeUtilizationRecord.upsert({
+      where: { employeeId_period: { employeeId, period: String(period) } },
+      create: { employeeId, period: String(period), plannedHours: planned, actualHours: actual, utilizationPercent, sourceFile: 'manual' },
+      update: { plannedHours: planned, actualHours: actual, utilizationPercent, sourceFile: 'manual' },
+      include: { employee: true },
+    });
+    res.status(201).json(record);
+  })
+);
+
+// PATCH /api/time-utilization/:id
+timeUtilizationRouter.patch(
+  '/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const existing = await prisma.timeUtilizationRecord.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Record not found.' });
+    const planned = req.body?.plannedHours === undefined ? existing.plannedHours : Number(req.body.plannedHours);
+    const actual = req.body?.actualHours === undefined ? existing.actualHours : Number(req.body.actualHours);
+    if (!Number.isFinite(planned) || !Number.isFinite(actual)) {
+      return res.status(400).json({ error: 'plannedHours and actualHours must be numbers.' });
+    }
+    const updated = await prisma.timeUtilizationRecord.update({
+      where: { id: existing.id },
+      data: { plannedHours: planned, actualHours: actual, utilizationPercent: computeUtilizationPercent(planned, actual) },
+      include: { employee: true },
+    });
+    res.json(updated);
+  })
+);
+
+// DELETE /api/time-utilization/:id
+timeUtilizationRouter.delete(
+  '/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    await prisma.timeUtilizationRecord.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   })
 );

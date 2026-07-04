@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import { api, apiError } from '../api';
 import { useRole } from '../RoleContext';
 import { can } from '../perms';
-import type { Employee, QAReport, QAScore } from '../types';
+import { useToast } from '../ui/Toast';
+import { useConfirm } from '../ui/Confirm';
+import { DataTable } from '../ui/DataTable';
+import type { Employee, QAReport, QAReportSummary, QAScore } from '../types';
 
 function currentMonth(): string {
   const d = new Date();
@@ -11,12 +14,15 @@ function currentMonth(): string {
 
 export function QAScores() {
   const { role } = useRole();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [period, setPeriod] = useState<string>(currentMonth());
   const [scores, setScores] = useState<QAScore[]>([]);
   const [report, setReport] = useState<QAReport | null>(null);
+  const [reports, setReports] = useState<QAReportSummary[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
 
   const [form, setForm] = useState({
     employeeId: '',
@@ -31,29 +37,82 @@ export function QAScores() {
     api.get<QAScore[]>('/qa-scores', { params: { period: p } }).then((r) => setScores(r.data)).catch((e) => setError(apiError(e)));
   };
 
+  const loadReports = () => {
+    api.get<QAReportSummary[]>('/qa-scores/reports').then((r) => setReports(r.data)).catch(() => {});
+  };
+
   useEffect(() => {
     api.get<Employee[]>('/employees').then((r) => setEmployees(r.data));
+    loadReports();
   }, []);
   useEffect(() => {
     loadScores(period);
     setReport(null);
   }, [period]);
 
+  const resetForm = () => {
+    setEditingId(null);
+    setForm({
+      employeeId: '',
+      jiraTicketKey: '',
+      timelinessScore: 4,
+      documentationScore: 4,
+      evaluationDate: `${currentMonth()}-15`,
+      comments: '',
+    });
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setMessage('');
     if (!form.employeeId || !form.jiraTicketKey) {
       setError('Team member and Jira ticket key are required.');
       return;
     }
     try {
-      await api.post('/qa-scores', form);
-      setMessage('QA score saved.');
-      setForm({ ...form, jiraTicketKey: '', comments: '' });
+      if (editingId) {
+        await api.patch(`/qa-scores/${editingId}`, form);
+        toast.success('QA score updated.');
+      } else {
+        await api.post('/qa-scores', form);
+        toast.success('QA score saved.');
+      }
+      resetForm();
       loadScores(period);
     } catch (err) {
-      setError(apiError(err));
+      const msg = apiError(err);
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
+  const startEdit = (s: QAScore) => {
+    setEditingId(s.id);
+    setForm({
+      employeeId: s.employeeId,
+      jiraTicketKey: s.jiraTicketKey,
+      timelinessScore: s.timelinessScore,
+      documentationScore: s.documentationScore,
+      evaluationDate: s.evaluationDate.slice(0, 10),
+      comments: s.comments ?? '',
+    });
+  };
+
+  const remove = async (s: QAScore) => {
+    const ok = await confirm({
+      title: 'Delete score',
+      message: `Delete the QA score for ${s.jiraTicketKey} (${s.agent.name})?`,
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/qa-scores/${s.id}`);
+      toast.success('QA score deleted.');
+      if (editingId === s.id) resetForm();
+      loadScores(period);
+    } catch (err) {
+      toast.error(apiError(err));
     }
   };
 
@@ -62,8 +121,11 @@ export function QAScores() {
     try {
       const r = await api.get<QAReport>('/qa-scores/report', { params: { period } });
       setReport(r.data);
+      loadReports();
     } catch (err) {
-      setError(apiError(err));
+      const msg = apiError(err);
+      setError(msg);
+      toast.error(msg);
     }
   };
 
@@ -71,10 +133,11 @@ export function QAScores() {
     if (!report) return;
     try {
       const r = await api.post(`/qa-scores/report/${report.reportId}/send-pmi`);
-      setMessage(r.data.note);
+      toast.success(r.data.note);
       setReport({ ...report, exportedToPMI: true });
+      loadReports();
     } catch (err) {
-      setError(apiError(err));
+      toast.error(apiError(err));
     }
   };
 
@@ -94,19 +157,21 @@ export function QAScores() {
         <a className="btn secondary" href={`/api/qa-scores/report/export.csv?period=${period}`}>
           Export CSV
         </a>
+        <a className="btn secondary" href={`/api/qa-scores/report/export.pdf?period=${period}`}>
+          Export PDF
+        </a>
       </div>
 
       {error && <div className="notice error">{error}</div>}
-      {message && <div className="notice success">{message}</div>}
 
       <div className="grid grid-2">
         {can.qa(role) && (
           <div className="card no-print">
-            <h3>Add QA score</h3>
+            <h3>{editingId ? 'Edit QA score' : 'Add QA score'}</h3>
             <form className="stack" onSubmit={submit}>
               <label className="field">
                 Team member
-                <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+                <select value={form.employeeId} disabled={!!editingId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
                   <option value="">Select…</option>
                   {employees.map((e) => (
                     <option key={e.id} value={e.id}>
@@ -159,46 +224,48 @@ export function QAScores() {
                 Comments
                 <input value={form.comments} onChange={(e) => setForm({ ...form, comments: e.target.value })} />
               </label>
-              <button className="btn" type="submit">
-                Save score
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn" type="submit">
+                  {editingId ? 'Update score' : 'Save score'}
+                </button>
+                {editingId && (
+                  <button type="button" className="btn secondary" onClick={resetForm}>
+                    Cancel
+                  </button>
+                )}
+              </div>
             </form>
           </div>
         )}
 
         <div className="card">
           <h3>Scores — {period}</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Member</th>
-                <th>Ticket</th>
-                <th className="right">Time</th>
-                <th className="right">Docs</th>
-                <th className="right">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {scores.map((s) => (
-                <tr key={s.id}>
-                  <td>{s.agent.name}</td>
-                  <td className="mono">{s.jiraTicketKey}</td>
-                  <td className="right mono">{s.timelinessScore}</td>
-                  <td className="right mono">{s.documentationScore}</td>
-                  <td className="right mono">
-                    <b>{s.totalScore}</b>
-                  </td>
-                </tr>
-              ))}
-              {scores.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="muted">
-                    No scores for this period.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <DataTable
+            rows={scores}
+            rowKey={(s) => s.id}
+            emptyText="No scores for this period."
+            columns={[
+              { key: 'member', header: 'Member', value: (s) => s.agent.name },
+              { key: 'ticket', header: 'Ticket', value: (s) => s.jiraTicketKey },
+              { key: 'time', header: 'Time', align: 'right', value: (s) => s.timelinessScore },
+              { key: 'docs', header: 'Docs', align: 'right', value: (s) => s.documentationScore },
+              { key: 'total', header: 'Total', align: 'right', value: (s) => s.totalScore, render: (s) => <b>{s.totalScore}</b> },
+            ]}
+            actions={
+              can.qa(role)
+                ? (s) => (
+                    <span className="row-actions">
+                      <button className="btn secondary icon" onClick={() => startEdit(s)}>
+                        Edit
+                      </button>
+                      <button className="btn danger icon" onClick={() => remove(s)}>
+                        Delete
+                      </button>
+                    </span>
+                  )
+                : undefined
+            }
+          />
         </div>
       </div>
 
@@ -252,6 +319,34 @@ export function QAScores() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {reports.length > 0 && (
+        <div className="card" style={{ marginTop: 18 }}>
+          <h3>Saved reports</h3>
+          <DataTable
+            rows={reports}
+            rowKey={(r) => r.id}
+            pageSize={5}
+            emptyText="No reports generated yet."
+            columns={[
+              { key: 'period', header: 'Period', value: (r) => r.period },
+              { key: 'generated', header: 'Generated', value: (r) => new Date(r.generatedAt).toLocaleString() },
+              {
+                key: 'pmi',
+                header: 'PMI',
+                value: (r) => (r.exportedToPMI ? 'Exported' : 'Not sent'),
+                render: (r) =>
+                  r.exportedToPMI ? <span className="badge good">Exported</span> : <span className="badge warn">Not sent</span>,
+              },
+            ]}
+            actions={(r) => (
+              <a className="btn secondary icon" href={`/api/qa-scores/report/export.csv?period=${r.period}`}>
+                CSV
+              </a>
+            )}
+          />
         </div>
       )}
     </div>

@@ -2,29 +2,37 @@ import { useEffect, useState } from 'react';
 import { api, apiError } from '../api';
 import { useRole } from '../RoleContext';
 import { can } from '../perms';
-import type { Employee, MaintenanceView } from '../types';
+import { useToast } from '../ui/Toast';
+import { useConfirm } from '../ui/Confirm';
+import { DataTable } from '../ui/DataTable';
+import type { Employee, MaintenanceActivity, MaintenanceView } from '../types';
 
 function currentMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+const defaultForm = () => ({
+  title: '',
+  employeeId: '',
+  scheduledStart: `${currentMonth()}-10T22:00`,
+  scheduledEnd: `${currentMonth()}-10T23:00`,
+  actualStart: `${currentMonth()}-10T22:00`,
+  actualEnd: `${currentMonth()}-10T23:15`,
+});
+
 export function Maintenance() {
   const { role } = useRole();
   const editable = can.maintenance(role);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [months, setMonths] = useState<string[]>([]);
   const [month, setMonth] = useState<string>('');
   const [view, setView] = useState<MaintenanceView | null>(null);
   const [error, setError] = useState('');
-  const [form, setForm] = useState({
-    title: '',
-    employeeId: '',
-    scheduledStart: `${currentMonth()}-10T22:00`,
-    scheduledEnd: `${currentMonth()}-10T23:00`,
-    actualStart: `${currentMonth()}-10T22:00`,
-    actualEnd: `${currentMonth()}-10T23:15`,
-  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState(defaultForm());
 
   const load = (m?: string) => {
     setError('');
@@ -43,6 +51,11 @@ export function Maintenance() {
     load();
   }, []);
 
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(defaultForm());
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -51,13 +64,51 @@ export function Maintenance() {
       return;
     }
     try {
-      await api.post('/maintenance', form);
-      setForm({ ...form, title: '' });
+      if (editingId) {
+        await api.patch(`/maintenance/${editingId}`, form);
+        toast.success('Activity updated.');
+      } else {
+        await api.post('/maintenance', form);
+        toast.success('Activity logged.');
+      }
+      resetForm();
       const m = await api.get<string[]>('/maintenance/months');
       setMonths(m.data);
       load(form.scheduledStart.slice(0, 7));
     } catch (err) {
-      setError(apiError(err));
+      const msg = apiError(err);
+      setError(msg);
+      toast.error(msg);
+    }
+  };
+
+  const toLocalInput = (iso: string) => iso.slice(0, 16);
+
+  const startEdit = (a: MaintenanceActivity) => {
+    setEditingId(a.id);
+    setForm({
+      title: a.title,
+      employeeId: a.employeeId,
+      scheduledStart: toLocalInput(a.scheduledStart),
+      scheduledEnd: toLocalInput(a.scheduledEnd),
+      actualStart: toLocalInput(a.actualStart),
+      actualEnd: toLocalInput(a.actualEnd),
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const remove = async (a: MaintenanceActivity) => {
+    const ok = await confirm({ title: 'Delete activity', message: `Delete "${a.title}"?`, danger: true, confirmLabel: 'Delete' });
+    if (!ok) return;
+    try {
+      await api.delete(`/maintenance/${a.id}`);
+      toast.success('Activity deleted.');
+      if (editingId === a.id) resetForm();
+      const m = await api.get<string[]>('/maintenance/months');
+      setMonths(m.data);
+      load(month);
+    } catch (err) {
+      toast.error(apiError(err));
     }
   };
 
@@ -122,7 +173,7 @@ export function Maintenance() {
 
       {editable && (
         <div className="card no-print" style={{ marginBottom: 18 }}>
-          <h3>Log maintenance activity</h3>
+          <h3>{editingId ? 'Edit maintenance activity' : 'Log maintenance activity'}</h3>
           <form className="stack" onSubmit={submit}>
             <div className="row">
               <label className="field">
@@ -131,7 +182,7 @@ export function Maintenance() {
               </label>
               <label className="field">
                 Team member
-                <select value={form.employeeId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
+                <select value={form.employeeId} disabled={!!editingId} onChange={(e) => setForm({ ...form, employeeId: e.target.value })}>
                   <option value="">Select…</option>
                   {employees.map((e) => (
                     <option key={e.id} value={e.id}>
@@ -177,48 +228,63 @@ export function Maintenance() {
                 />
               </label>
             </div>
-            <button className="btn" type="submit">
-              Save activity
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn" type="submit">
+                {editingId ? 'Update activity' : 'Save activity'}
+              </button>
+              {editingId && (
+                <button type="button" className="btn secondary" onClick={resetForm}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </div>
       )}
 
       <div className="card">
         <h3>Activities — {month || '—'}</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Member</th>
-              <th>Status</th>
-              <th className="right">Exceeded by</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(view?.activities ?? []).map((a) => (
-              <tr key={a.id}>
-                <td>{a.title}</td>
-                <td>{a.employee.name}</td>
-                <td>
-                  {a.status === 'Exceeded' ? (
-                    <span className="badge bad">Exceeded</span>
-                  ) : (
-                    <span className="badge good">Within time</span>
-                  )}
-                </td>
-                <td className="right mono">{a.exceededByMinutes ? `${a.exceededByMinutes} min` : '—'}</td>
-              </tr>
-            ))}
-            {(view?.activities ?? []).length === 0 && (
-              <tr>
-                <td colSpan={4} className="muted">
-                  No activities for this month.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        <DataTable
+          rows={view?.activities ?? []}
+          rowKey={(a) => a.id}
+          emptyText="No activities for this month."
+          columns={[
+            { key: 'title', header: 'Title', value: (a) => a.title },
+            { key: 'member', header: 'Member', value: (a) => a.employee.name },
+            {
+              key: 'status',
+              header: 'Status',
+              value: (a) => a.status,
+              render: (a) =>
+                a.status === 'Exceeded' ? (
+                  <span className="badge bad">Exceeded</span>
+                ) : (
+                  <span className="badge good">Within time</span>
+                ),
+            },
+            {
+              key: 'exceeded',
+              header: 'Exceeded by',
+              align: 'right',
+              value: (a) => a.exceededByMinutes,
+              render: (a) => (a.exceededByMinutes ? `${a.exceededByMinutes} min` : '—'),
+            },
+          ]}
+          actions={
+            editable
+              ? (a) => (
+                  <span className="row-actions">
+                    <button className="btn secondary icon" onClick={() => startEdit(a)}>
+                      Edit
+                    </button>
+                    <button className="btn danger icon" onClick={() => remove(a)}>
+                      Delete
+                    </button>
+                  </span>
+                )
+              : undefined
+          }
+        />
       </div>
     </div>
   );

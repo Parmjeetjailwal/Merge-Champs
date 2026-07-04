@@ -3,20 +3,22 @@ import axios from 'axios';
 export const ROLES = ['Admin', 'QA Lead', 'Call QA Analyst', 'Team Member'] as const;
 export type Role = (typeof ROLES)[number];
 
-const ROLE_KEY = 'qa-role';
+const TOKEN_KEY = 'qa-token';
 
-export function getRole(): Role {
-  return (localStorage.getItem(ROLE_KEY) as Role) || 'Admin';
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
 }
-export function setStoredRole(role: Role): void {
-  localStorage.setItem(ROLE_KEY, role);
+export function setToken(token: string | null): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
 }
 
 export const api = axios.create({ baseURL: '/api' });
 
 api.interceptors.request.use((cfg) => {
+  const token = getToken();
   cfg.headers = cfg.headers ?? {};
-  cfg.headers['x-role'] = getRole();
+  if (token) cfg.headers['Authorization'] = `Bearer ${token}`;
   return cfg;
 });
 

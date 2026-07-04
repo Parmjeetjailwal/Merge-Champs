@@ -76,6 +76,26 @@ maintenanceRouter.get(
   })
 );
 
+// GET /api/maintenance/trend -> on-time % per month (last 12)
+maintenanceRouter.get(
+  '/trend',
+  asyncHandler(async (_req, res) => {
+    const activities = await prisma.maintenanceActivity.findMany({ orderBy: { month: 'asc' } });
+    const byMonth = new Map<string, { within: number; total: number }>();
+    for (const a of activities) {
+      const g = byMonth.get(a.month) ?? { within: 0, total: 0 };
+      g.total++;
+      if (a.status === 'WithinTime') g.within++;
+      byMonth.set(a.month, g);
+    }
+    const trend = [...byMonth.entries()]
+      .map(([period, g]) => ({ period, value: g.total ? Math.round((g.within / g.total) * 100) : 0 }))
+      .sort((a, b) => a.period.localeCompare(b.period))
+      .slice(-12);
+    res.json(trend);
+  })
+);
+
 // GET /api/maintenance?month=YYYY-MM
 maintenanceRouter.get(
   '/',
@@ -123,5 +143,50 @@ maintenanceRouter.post(
       include: { employee: true },
     });
     res.status(201).json(activity);
+  })
+);
+
+// PATCH /api/maintenance/:id  -> edit an activity (recomputes status + month)
+maintenanceRouter.patch(
+  '/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const existing = await prisma.maintenanceActivity.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Activity not found.' });
+    const { title, employeeId, scheduledStart, scheduledEnd, actualStart, actualEnd } = req.body ?? {};
+    const ss = scheduledStart ? new Date(scheduledStart) : existing.scheduledStart;
+    const se = scheduledEnd ? new Date(scheduledEnd) : existing.scheduledEnd;
+    const as = actualStart ? new Date(actualStart) : existing.actualStart;
+    const ae = actualEnd ? new Date(actualEnd) : existing.actualEnd;
+    if ([ss, se, as, ae].some((d) => Number.isNaN(d.getTime()))) {
+      return res.status(400).json({ error: 'All date/time fields must be valid dates.' });
+    }
+    const { status, exceededByMinutes } = maintenanceStatus(ss, se, as, ae);
+    const updated = await prisma.maintenanceActivity.update({
+      where: { id: existing.id },
+      data: {
+        title: title ?? existing.title,
+        employeeId: employeeId ?? existing.employeeId,
+        scheduledStart: ss,
+        scheduledEnd: se,
+        actualStart: as,
+        actualEnd: ae,
+        status,
+        exceededByMinutes,
+        month: toPeriod(ss),
+      },
+      include: { employee: true },
+    });
+    res.json(updated);
+  })
+);
+
+// DELETE /api/maintenance/:id
+maintenanceRouter.delete(
+  '/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    await prisma.maintenanceActivity.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   })
 );

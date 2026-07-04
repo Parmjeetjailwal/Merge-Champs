@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { config } from '../config';
+import { getSettings } from '../settings';
 import { asyncHandler } from '../lib/asyncHandler';
 import { requireRole } from '../middleware/roles';
 import { computeCallQaTotal, round2, toPeriod } from '../lib/calc';
@@ -24,9 +25,10 @@ export interface CallQaView {
 }
 
 export async function buildCallQaView(period: string | null): Promise<CallQaView> {
+  const settings = await getSettings();
   const thresholds = {
-    caseCreationSecs: config.callQa.caseCreationThresholdSecs,
-    callCloseSecs: config.callQa.callCloseThresholdSecs,
+    caseCreationSecs: settings.callQa.caseCreationThresholdSecs,
+    callCloseSecs: settings.callQa.callCloseThresholdSecs,
   };
   if (!period) {
     return { period: null, evaluations: [], perAgent: [], perParameter: [], topImprovementArea: null, thresholds };
@@ -82,6 +84,26 @@ callQaRouter.get(
   })
 );
 
+// GET /api/call-qa/trend -> avg total score per period (last 12)
+callQaRouter.get(
+  '/trend',
+  asyncHandler(async (_req, res) => {
+    const evals = await prisma.callQAEvaluation.findMany({ orderBy: { period: 'asc' } });
+    const byPeriod = new Map<string, { sum: number; n: number }>();
+    for (const ev of evals) {
+      const g = byPeriod.get(ev.period) ?? { sum: 0, n: 0 };
+      g.sum += ev.totalScore;
+      g.n++;
+      byPeriod.set(ev.period, g);
+    }
+    const trend = [...byPeriod.entries()]
+      .map(([period, g]) => ({ period, value: round2(g.sum / g.n) }))
+      .sort((a, b) => a.period.localeCompare(b.period))
+      .slice(-12);
+    res.json(trend);
+  })
+);
+
 // GET /api/call-qa?period=YYYY-MM
 callQaRouter.get(
   '/',
@@ -131,7 +153,8 @@ callQaRouter.post(
     const closeSecs = Number(callCloseTimeSecs) || 0;
     const date = callDate ? new Date(callDate) : new Date();
 
-    const totalScore = computeCallQaTotal(scores, config.callQa);
+    const settings = await getSettings();
+    const totalScore = computeCallQaTotal(scores, settings.callQa);
     const evaluation = await prisma.callQAEvaluation.create({
       data: {
         employeeId,
@@ -144,9 +167,9 @@ callQaRouter.post(
         deadAirIncidents: Number(deadAirIncidents) || 0,
         callClosingScore: scores.closing,
         caseCreationTimeSecs: caseSecs,
-        caseCreationBreached: caseSecs > config.callQa.caseCreationThresholdSecs,
+        caseCreationBreached: caseSecs > settings.callQa.caseCreationThresholdSecs,
         callCloseTimeSecs: closeSecs,
-        callCloseBreached: closeSecs > config.callQa.callCloseThresholdSecs,
+        callCloseBreached: closeSecs > settings.callQa.callCloseThresholdSecs,
         totalScore,
         period: toPeriod(date),
         comments: comments ?? null,
@@ -154,5 +177,61 @@ callQaRouter.post(
       include: { agent: true, analyst: true },
     });
     res.status(201).json(evaluation);
+  })
+);
+
+// PATCH /api/call-qa/:id  -> edit an evaluation (recomputes total + breach flags)
+callQaRouter.patch(
+  '/:id',
+  requireRole('Admin', 'Call QA Analyst'),
+  asyncHandler(async (req, res) => {
+    const existing = await prisma.callQAEvaluation.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Evaluation not found.' });
+    const b = req.body ?? {};
+    const num = (v: unknown, fallback: number) => (v === undefined || v === '' ? fallback : Number(v));
+    const scores = {
+      opening: num(b.callOpeningScore, existing.callOpeningScore),
+      info: num(b.infoCapturedScore, existing.infoCapturedScore),
+      deadAir: num(b.deadAirScore, existing.deadAirScore),
+      closing: num(b.callClosingScore, existing.callClosingScore),
+    };
+    if (Object.values(scores).some((v) => !Number.isFinite(v))) {
+      return res.status(400).json({ error: 'Quality parameter scores must be numbers.' });
+    }
+    const caseSecs = num(b.caseCreationTimeSecs, existing.caseCreationTimeSecs);
+    const closeSecs = num(b.callCloseTimeSecs, existing.callCloseTimeSecs);
+    const date = b.callDate ? new Date(b.callDate) : existing.callDate;
+    const settings = await getSettings();
+    const updated = await prisma.callQAEvaluation.update({
+      where: { id: existing.id },
+      data: {
+        callReference: b.callReference ?? existing.callReference,
+        callDate: date,
+        period: toPeriod(date),
+        callOpeningScore: scores.opening,
+        infoCapturedScore: scores.info,
+        deadAirScore: scores.deadAir,
+        deadAirIncidents: num(b.deadAirIncidents, existing.deadAirIncidents),
+        callClosingScore: scores.closing,
+        caseCreationTimeSecs: caseSecs,
+        caseCreationBreached: caseSecs > settings.callQa.caseCreationThresholdSecs,
+        callCloseTimeSecs: closeSecs,
+        callCloseBreached: closeSecs > settings.callQa.callCloseThresholdSecs,
+        totalScore: computeCallQaTotal(scores, config.callQa),
+        comments: b.comments ?? existing.comments,
+      },
+      include: { agent: true, analyst: true },
+    });
+    res.json(updated);
+  })
+);
+
+// DELETE /api/call-qa/:id
+callQaRouter.delete(
+  '/:id',
+  requireRole('Admin', 'Call QA Analyst'),
+  asyncHandler(async (req, res) => {
+    await prisma.callQAEvaluation.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   })
 );

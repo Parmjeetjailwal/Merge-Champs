@@ -11,13 +11,25 @@ function withProgress(joinee: {
   joinDate: Date;
   team: string | null;
   mentor: string | null;
-  topics: { id: string; topicName: string; status: string; completedDate: Date | null }[];
+  topics: {
+    id: string;
+    topicName: string;
+    status: string;
+    completedDate: Date | null;
+    targetDate: Date | null;
+    notes: string | null;
+    signedOffBy: string | null;
+  }[];
 }) {
   const total = joinee.topics.length;
   const completed = joinee.topics.filter((t) => t.status === 'Completed').length;
+  const now = new Date();
+  const overdue = joinee.topics.filter(
+    (t) => t.status === 'Pending' && t.targetDate && new Date(t.targetDate) < now
+  ).length;
   return {
     ...joinee,
-    progress: { completed, total, percent: total ? Math.round((completed / total) * 100) : 0 },
+    progress: { completed, total, percent: total ? Math.round((completed / total) * 100) : 0, overdue },
   };
 }
 
@@ -74,19 +86,30 @@ ktRouter.post(
   })
 );
 
-// PATCH /api/kt/topics/:id  { status: 'Completed' | 'Pending' }
+// PATCH /api/kt/topics/:id  { status?, targetDate?, notes?, signedOffBy? }
 ktRouter.patch(
   '/topics/:id',
   requireRole('Admin', 'QA Lead'),
   asyncHandler(async (req, res) => {
-    const { status } = req.body ?? {};
-    if (status !== 'Completed' && status !== 'Pending') {
-      return res.status(400).json({ error: "status must be 'Completed' or 'Pending'." });
+    const { status, targetDate, notes, signedOffBy } = req.body ?? {};
+    const data: {
+      status?: string;
+      completedDate?: Date | null;
+      targetDate?: Date | null;
+      notes?: string | null;
+      signedOffBy?: string | null;
+    } = {};
+    if (status !== undefined) {
+      if (status !== 'Completed' && status !== 'Pending') {
+        return res.status(400).json({ error: "status must be 'Completed' or 'Pending'." });
+      }
+      data.status = status;
+      data.completedDate = status === 'Completed' ? new Date() : null;
     }
-    const topic = await prisma.kTTopic.update({
-      where: { id: req.params.id },
-      data: { status, completedDate: status === 'Completed' ? new Date() : null },
-    });
+    if (targetDate !== undefined) data.targetDate = targetDate ? new Date(targetDate) : null;
+    if (notes !== undefined) data.notes = notes || null;
+    if (signedOffBy !== undefined) data.signedOffBy = signedOffBy || null;
+    const topic = await prisma.kTTopic.update({ where: { id: req.params.id }, data });
     res.json(topic);
   })
 );
@@ -108,5 +131,61 @@ ktRouter.delete(
   asyncHandler(async (req, res) => {
     await prisma.joinee.delete({ where: { id: req.params.id } });
     res.status(204).end();
+  })
+);
+
+// GET /api/kt/templates
+ktRouter.get(
+  '/templates',
+  asyncHandler(async (_req, res) => {
+    const templates = await prisma.kTTemplate.findMany({
+      include: { topics: { orderBy: { topicName: 'asc' } } },
+      orderBy: { name: 'asc' },
+    });
+    res.json(templates);
+  })
+);
+
+// POST /api/kt/templates  { name, team?, topics?: string[] }
+ktRouter.post(
+  '/templates',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const { name, team, topics } = req.body ?? {};
+    if (!name) return res.status(400).json({ error: 'name is required.' });
+    const template = await prisma.kTTemplate.create({
+      data: {
+        name,
+        team: team ?? null,
+        topics: Array.isArray(topics)
+          ? { create: topics.filter(Boolean).map((topicName: string) => ({ topicName })) }
+          : undefined,
+      },
+      include: { topics: true },
+    });
+    res.status(201).json(template);
+  })
+);
+
+// POST /api/kt/joinees/:id/apply-template  { templateId }
+ktRouter.post(
+  '/joinees/:id/apply-template',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const { templateId } = req.body ?? {};
+    const template = await prisma.kTTemplate.findUnique({ where: { id: String(templateId) }, include: { topics: true } });
+    if (!template) return res.status(404).json({ error: 'Template not found.' });
+    const joinee = await prisma.joinee.findUnique({ where: { id: req.params.id } });
+    if (!joinee) return res.status(404).json({ error: 'Joinee not found.' });
+    if (template.topics.length > 0) {
+      await prisma.kTTopic.createMany({
+        data: template.topics.map((t) => ({ joineeId: req.params.id, topicName: t.topicName })),
+      });
+    }
+    const updated = await prisma.joinee.findUnique({
+      where: { id: req.params.id },
+      include: { topics: { orderBy: { topicName: 'asc' } } },
+    });
+    res.status(201).json(updated ? withProgress(updated) : null);
   })
 );

@@ -94,20 +94,37 @@ npm run dev          # http://localhost:5173 (proxies /api -> :4000)
 
 **Frontend** (`/frontend`): `npm run dev`, `npm run build`, `npm run preview`.
 
-## Roles (demo auth)
+## Authentication & roles
 
-A role switcher in the sidebar sets an `x-role` header the backend enforces:
+Sign in with email + password (JWT). The token is stored client-side and sent as a
+`Bearer` header; the backend enforces role permissions. For local dev, an `x-role` header
+fallback is still accepted (handy for scripts/tests).
 
-| Role | Can write |
-|---|---|
-| **Admin** | everything |
-| **QA Lead** | time upload, QA scores/report/PMI, KT, maintenance |
-| **Call QA Analyst** | call evaluations |
-| **Team Member** | read-only |
+**Seeded logins:**
 
-> This is a lightweight, documented stand-in for the JWT auth in the spec — the permission
-> model is real; only the identity mechanism is simplified for local dev. Swap the
-> `x-role` header for JWT-derived claims to productionize.
+| Role | Email | Password | Can write |
+|---|---|---|---|
+| **Admin** | admin@example.com | admin123 | everything + Settings + Users |
+| **QA Lead** | qalead@example.com | qalead123 | time upload, QA scores/report/PMI, KT, maintenance |
+| **Call QA Analyst** | analyst@example.com | analyst123 | call evaluations |
+| **Team Member** | member@example.com | member123 | read-only |
+
+The Login screen also has one-click **dev login** buttons. Change `JWT_SECRET` in
+`backend/.env` for production.
+
+## Feature highlights
+
+- **Full CRUD** (create/edit/delete) on every tab, with confirmation dialogs and toasts;
+  searchable / sortable / paginated tables.
+- **Dashboard** shows month-over-month **deltas**, an **alerts** panel (below-target
+  utilization, overdue KT, repeat timeline-missers, call-time breaches), and **trend charts**.
+- **Settings** (Admin) — configure QA/Call weighting, time thresholds, utilization target
+  (RAG status), and whether call scores are included in the PMI report.
+- **Users** (Admin) — manage login accounts and roles.
+- **QA report** exports **CSV** and **PDF** (server-generated) and can be sent to PMI.
+- **KT** — templates, per-topic target dates with overdue flags, notes, and mentor sign-off.
+- **Jira** — `GET /api/jira/tickets` returns mock data, or live issues when `JIRA_*` env vars
+  are set.
 
 ## Excel import format (Time Utilization)
 

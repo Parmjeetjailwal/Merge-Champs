@@ -66,6 +66,7 @@ Invoke-Step npm @('run', 'build') 'frontend'
 $port = if ($env:PORT) { $env:PORT } else { '4000' }
 Write-Host ""
 Write-Host "==> Starting the QA app on http://localhost:$port  (press Ctrl+C to stop)"
+Write-Host "    Sign in with a demo account - e.g. admin@example.com / admin123 (or click a dev-login button)." -ForegroundColor DarkGray
 $env:PORT = $port
 Push-Location backend
 try { npm start } finally { Pop-Location }

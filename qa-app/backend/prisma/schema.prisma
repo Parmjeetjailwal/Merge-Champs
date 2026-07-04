@@ -79,6 +79,9 @@ model KTTopic {
   topicName     String
   status        String    @default("Pending") // Pending | Completed
   completedDate DateTime?
+  targetDate    DateTime?
+  notes         String?
+  signedOffBy   String?
 }
 
 model MaintenanceActivity {
@@ -117,4 +120,34 @@ model CallQAEvaluation {
   period               String // YYYY-MM
   comments             String?
   createdAt            DateTime  @default(now())
+}
+
+model AppSetting {
+  key       String   @id
+  value     String // JSON blob
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         String   @default("Team Member") // Admin | QA Lead | Call QA Analyst | Team Member
+  employeeId   String?
+  createdAt    DateTime @default(now())
+}
+
+model KTTemplate {
+  id        String             @id @default(cuid())
+  name      String
+  team      String?
+  createdAt DateTime           @default(now())
+  topics    KTTemplateTopic[]
+}
+
+model KTTemplateTopic {
+  id         String     @id @default(cuid())
+  template   KTTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  templateId String
+  topicName  String
 }
