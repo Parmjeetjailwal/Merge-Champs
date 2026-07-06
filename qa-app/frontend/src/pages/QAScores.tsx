@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, apiError } from '../api';
 import { useRole } from '../RoleContext';
 import { can } from '../perms';
@@ -23,6 +23,7 @@ export function QAScores() {
   const [reports, setReports] = useState<QAReportSummary[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
     employeeId: '',
@@ -39,6 +40,27 @@ export function QAScores() {
 
   const loadReports = () => {
     api.get<QAReportSummary[]>('/qa-scores/reports').then((r) => setReports(r.data)).catch(() => {});
+  };
+
+  const onImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const file = fileRef.current?.files?.[0];
+    if (!file) {
+      toast.error('Choose an .xlsx/.xls/.csv file.');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await api.post('/qa-scores/upload', fd);
+      const { inserted, errors, totalRows } = r.data;
+      toast.success(`Imported ${inserted}/${totalRows} score(s)${errors.length ? `, ${errors.length} row error(s)` : ''}.`);
+      if (fileRef.current) fileRef.current.value = '';
+      loadScores(period);
+      loadReports();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
   };
 
   useEffect(() => {
@@ -163,6 +185,24 @@ export function QAScores() {
       </div>
 
       {error && <div className="notice error">{error}</div>}
+
+      {can.qa(role) && (
+        <div className="card no-print" style={{ marginBottom: 18 }}>
+          <h3>Import from Excel</h3>
+          <form onSubmit={onImport} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" />
+            <button className="btn" type="submit">
+              Upload
+            </button>
+            <a className="btn secondary" href="/api/templates/qa-scores">
+              Download template
+            </a>
+            <span className="muted" style={{ fontSize: 13 }}>
+              Columns: Team Member, Email, Jira Ticket Key, Timeliness, Documentation, Evaluation Date, Comments
+            </span>
+          </form>
+        </div>
+      )}
 
       <div className="grid grid-2">
         {can.qa(role) && (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, apiError } from '../api';
 import { useRole } from '../RoleContext';
 import { can } from '../perms';
@@ -33,6 +33,7 @@ export function Maintenance() {
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(defaultForm());
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const load = (m?: string) => {
     setError('');
@@ -43,6 +44,28 @@ export function Maintenance() {
         if (r.data.month) setMonth(r.data.month);
       })
       .catch((e) => setError(apiError(e)));
+  };
+
+  const onImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const file = fileRef.current?.files?.[0];
+    if (!file) {
+      toast.error('Choose an .xlsx/.xls/.csv file.');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await api.post('/maintenance/upload', fd);
+      const { inserted, errors, totalRows } = r.data;
+      toast.success(`Imported ${inserted}/${totalRows} activity row(s)${errors.length ? `, ${errors.length} error(s)` : ''}.`);
+      if (fileRef.current) fileRef.current.value = '';
+      const m = await api.get<string[]>('/maintenance/months');
+      setMonths(m.data);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
   };
 
   useEffect(() => {
@@ -139,6 +162,24 @@ export function Maintenance() {
       </div>
 
       {error && <div className="notice error">{error}</div>}
+
+      {editable && (
+        <div className="card no-print" style={{ marginBottom: 18 }}>
+          <h3>Import from Excel</h3>
+          <form onSubmit={onImport} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" />
+            <button className="btn" type="submit">
+              Upload
+            </button>
+            <a className="btn secondary" href="/api/templates/maintenance">
+              Download template
+            </a>
+            <span className="muted" style={{ fontSize: 13 }}>
+              Columns: Title, Team Member, Email, Scheduled Start, Scheduled End, Actual Start, Actual End
+            </span>
+          </form>
+        </div>
+      )}
 
       <div className="grid grid-2" style={{ marginBottom: 18 }}>
         <div className="card">

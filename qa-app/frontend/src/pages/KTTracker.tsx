@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, apiError } from '../api';
 import { useRole } from '../RoleContext';
 import { useAuth } from '../AuthContext';
@@ -19,6 +19,7 @@ export function KTTracker() {
   const [error, setError] = useState('');
   const [form, setForm] = useState({ name: '', joinDate: '', team: '', mentor: '', topics: '' });
   const [newTopic, setNewTopic] = useState<Record<string, string>>({});
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
     api.get<Joinee[]>('/kt/joinees').then((r) => setJoinees(r.data)).catch((e) => setError(apiError(e)));
@@ -27,6 +28,26 @@ export function KTTracker() {
   useEffect(() => {
     api.get<KTTemplate[]>('/kt/templates').then((r) => setTemplates(r.data)).catch(() => {});
   }, []);
+
+  const onImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const file = fileRef.current?.files?.[0];
+    if (!file) {
+      toast.error('Choose an .xlsx/.xls/.csv file.');
+      return;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await api.post('/kt/upload', fd);
+      const { joineesCreated, topicsAdded, errors } = r.data;
+      toast.success(`Imported ${joineesCreated} joinee(s), ${topicsAdded} topic(s)${errors.length ? `, ${errors.length} error(s)` : ''}.`);
+      if (fileRef.current) fileRef.current.value = '';
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
 
   const addJoinee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,6 +153,24 @@ export function KTTracker() {
       <p className="page-sub">Track knowledge-transfer topics covered for each new joinee.</p>
 
       {error && <div className="notice error">{error}</div>}
+
+      {editable && (
+        <div className="card no-print" style={{ marginBottom: 18 }}>
+          <h3>Import from Excel</h3>
+          <form onSubmit={onImport} style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" />
+            <button className="btn" type="submit">
+              Upload
+            </button>
+            <a className="btn secondary" href="/api/templates/kt">
+              Download template
+            </a>
+            <span className="muted" style={{ fontSize: 13 }}>
+              Columns: Joinee, Team, Mentor, Join Date, Topic, Status, Target Date (one row per topic)
+            </span>
+          </form>
+        </div>
+      )}
 
       {editable && (
         <div className="card no-print" style={{ marginBottom: 18 }}>

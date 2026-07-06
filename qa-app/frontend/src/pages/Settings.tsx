@@ -68,31 +68,27 @@ export function Settings() {
         </div>
 
         <div className="card">
-          <h3>Call QA weighting & thresholds</h3>
-          <div className="row">
-            <label className="field">Opening
-              <input type="number" step={0.05} value={cfg.callQa.opening}
-                onChange={(e) => setCfg({ ...cfg, callQa: { ...cfg.callQa, opening: n(e.target.value) } })} /></label>
-            <label className="field">Info captured
-              <input type="number" step={0.05} value={cfg.callQa.info}
-                onChange={(e) => setCfg({ ...cfg, callQa: { ...cfg.callQa, info: n(e.target.value) } })} /></label>
-          </div>
-          <div className="row">
-            <label className="field">No dead air
-              <input type="number" step={0.05} value={cfg.callQa.deadAir}
-                onChange={(e) => setCfg({ ...cfg, callQa: { ...cfg.callQa, deadAir: n(e.target.value) } })} /></label>
-            <label className="field">Closing
-              <input type="number" step={0.05} value={cfg.callQa.closing}
-                onChange={(e) => setCfg({ ...cfg, callQa: { ...cfg.callQa, closing: n(e.target.value) } })} /></label>
-          </div>
-          <div className="row">
-            <label className="field">Case creation ≤ (s)
-              <input type="number" value={cfg.callQa.caseCreationThresholdSecs}
-                onChange={(e) => setCfg({ ...cfg, callQa: { ...cfg.callQa, caseCreationThresholdSecs: n(e.target.value) } })} /></label>
-            <label className="field">Call close ≤ (s)
-              <input type="number" value={cfg.callQa.callCloseThresholdSecs}
-                onChange={(e) => setCfg({ ...cfg, callQa: { ...cfg.callQa, callCloseThresholdSecs: n(e.target.value) } })} /></label>
-          </div>
+          <h3>Call &amp; Case QC</h3>
+          <p className="metric-sub">Yes = full marks, No = zero, NA excluded. Pass when overall adherence ≥ target.</p>
+          <label className="field">
+            Pass target (% overall adherence)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={cfg.callQc.target}
+              onChange={(e) => setCfg({ ...cfg, callQc: { ...cfg.callQc, target: n(e.target.value) } })}
+            />
+          </label>
+          <label className="field">
+            Points per &quot;Yes&quot;
+            <input
+              type="number"
+              min={1}
+              value={cfg.callQc.pointsPerYes}
+              onChange={(e) => setCfg({ ...cfg, callQc: { ...cfg.callQc, pointsPerYes: n(e.target.value) } })}
+            />
+          </label>
         </div>
 
         <div className="card">

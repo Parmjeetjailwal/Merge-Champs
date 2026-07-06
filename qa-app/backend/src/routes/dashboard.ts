@@ -70,9 +70,7 @@ dashboardRouter.get(
       .filter((r) => r.utilizationPercent < target)
       .map((r) => ({ name: r.employee.name, utilizationPercent: r.utilizationPercent }));
 
-    const callBreaches = (
-      callView.evaluations as { caseCreationBreached: boolean; callCloseBreached: boolean }[]
-    ).filter((e) => e.caseCreationBreached || e.callCloseBreached).length;
+    const callBreaches = (callView.evaluations as { passed: boolean }[]).filter((e) => !e.passed).length;
 
     const ktSummary = joinees.map((j) => {
       const total = j.topics.length;

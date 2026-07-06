@@ -138,7 +138,7 @@ export function Dashboard() {
                 <div className="metric">{data.callQa.averageScore}</div>
                 <Delta value={data.deltas.callQa} />
               </div>
-              <p className="metric-sub">Average call quality score</p>
+              <p className="metric-sub">Average overall QC adherence %</p>
               {data.callQa.topImprovementArea ? (
                 <p>
                   Top improvement area: <span className="badge warn">{data.callQa.topImprovementArea.label}</span>{' '}
@@ -243,7 +243,7 @@ export function Dashboard() {
                 {data.alerts.callBreaches > 0 && (
                   <li>
                     <span>
-                      <span className="badge bad">CALL BREACHES</span> time thresholds
+                      <span className="badge bad">QC FAILS</span> below pass target
                     </span>
                     <b className="mono">{data.alerts.callBreaches}</b>
                   </li>

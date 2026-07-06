@@ -6,8 +6,12 @@ import { requireRole } from '../middleware/roles';
 import { computeQaTotal, round2, toPeriod } from '../lib/calc';
 import { getSettings } from '../settings';
 import PDFDocument from 'pdfkit';
+import multer from 'multer';
+import { parseSheet, getField, toNumber, toDate, resolveEmployee } from '../lib/import';
 
 export const qaScoresRouter = Router();
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 export interface QaMemberSummary {
   employeeId: string;
@@ -81,17 +85,22 @@ export async function buildQaReportPayload(period: string): Promise<QaReportPayl
 
   const settings = await getSettings();
   if (settings.pmi.includeCallScores) {
-    const calls = await prisma.callQAEvaluation.findMany({ where: { period } });
+    const calls = await prisma.callQcEvaluation.findMany({ where: { period } });
     const byAgent = new Map<string, { sum: number; n: number }>();
-    for (const c of calls) {
-      const g = byAgent.get(c.employeeId) ?? { sum: 0, n: 0 };
-      g.sum += c.totalScore;
+    const add = (id: string, v: number | null) => {
+      if (v === null) return;
+      const g = byAgent.get(id) ?? { sum: 0, n: 0 };
+      g.sum += v;
       g.n++;
-      byAgent.set(c.employeeId, g);
+      byAgent.set(id, g);
+    };
+    for (const c of calls) {
+      add(c.callHandledById, c.overallAdherence);
+      add(c.caseOwnerId, c.overallAdherence);
     }
     for (const m of teamMembers) {
       const g = byAgent.get(m.employeeId);
-      if (g) m.avgCallScore = round2(g.sum / g.n);
+      if (g && g.n) m.avgCallScore = round2(g.sum / g.n);
     }
   }
 
@@ -183,6 +192,63 @@ qaScoresRouter.post(
       created.push(score);
     }
     res.status(201).json(created);
+  })
+);
+
+// POST /api/qa-scores/upload  (multipart field: file)
+qaScoresRouter.post(
+  '/upload',
+  requireRole('Admin', 'QA Lead'),
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    const file = (req as unknown as { file?: { buffer: Buffer } }).file;
+    if (!file) return res.status(400).json({ error: 'No file uploaded (form field "file").' });
+    const rows = parseSheet(file.buffer);
+    const settings = await getSettings();
+    const errors: { row: number; message: string }[] = [];
+    let inserted = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const rowNo = i + 2;
+      const row = rows[i];
+      const name = getField(row, ['Team Member', 'Employee Name', 'Name', 'Employee', 'Agent']);
+      const idOrEmail = getField(row, ['Email', 'Employee ID', 'EmployeeID', 'ID']);
+      const ticket = getField(row, ['Jira Ticket Key', 'Ticket Key', 'Ticket', 'Jira', 'Key']);
+      const t = toNumber(getField(row, ['Timeliness', 'Timeliness Score', 'Timely Response']));
+      const d = toNumber(getField(row, ['Documentation', 'Documentation Score', 'Docs']));
+      const comments = getField(row, ['Comments', 'Comment']);
+      if (!name && !idOrEmail) {
+        errors.push({ row: rowNo, message: 'Missing team member.' });
+        continue;
+      }
+      if (!ticket) {
+        errors.push({ row: rowNo, message: 'Missing Jira ticket key.' });
+        continue;
+      }
+      if (t === null || d === null) {
+        errors.push({ row: rowNo, message: 'Timeliness and Documentation must be numbers.' });
+        continue;
+      }
+      const employee = await resolveEmployee(name, idOrEmail);
+      if (!employee) {
+        errors.push({ row: rowNo, message: 'Could not resolve employee.' });
+        continue;
+      }
+      const when = toDate(getField(row, ['Evaluation Date', 'Date'])) ?? new Date();
+      await prisma.qAScore.create({
+        data: {
+          employeeId: employee.id,
+          jiraTicketKey: String(ticket).trim(),
+          timelinessScore: t,
+          documentationScore: d,
+          totalScore: computeQaTotal(t, d, settings.qa),
+          evaluationDate: when,
+          period: toPeriod(when),
+          comments: comments ? String(comments) : null,
+        },
+      });
+      inserted++;
+    }
+    res.json({ inserted, errors, totalRows: rows.length });
   })
 );
 

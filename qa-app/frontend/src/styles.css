@@ -314,6 +314,57 @@ input[type='file'] { font-size: 13px; }
 .modal p { color: var(--text-soft); margin: 0; font-size: 14px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 
+/* Page head row (title + primary action) */
+.page-head-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+
+/* Inline checkbox + label (aligned on one line) */
+.check-inline { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-soft); font-weight: 550; cursor: pointer; }
+.check-inline input[type='checkbox'] { flex: none; }
+
+/* Wide modal + Call & Case QC scorecard */
+.modal.wide { max-width: 880px; max-height: 88vh; overflow-y: auto; }
+.modal-head-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.score-panel { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; padding: 12px 14px; background: #f8fafc; border: 1px solid var(--border); border-radius: 12px; }
+.score-panel .stat { display: flex; flex-direction: column; gap: 5px; }
+.stat-label { font-size: 11px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.score-panel .stat b { font-size: 18px; }
+.qc-section { margin-top: 14px; }
+.qc-section-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; }
+.qc-section-head h4 { margin: 0; font-size: 14px; }
+.qc-row { display: grid; grid-template-columns: 1fr auto 210px; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.qc-row:last-child { border-bottom: none; }
+.qc-text { color: var(--text); line-height: 1.4; }
+.qc-comment { padding: 7px 10px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 12.5px; width: 100%; box-sizing: border-box; }
+.qc-comment:focus { outline: none; border-color: var(--primary-2); box-shadow: var(--ring); }
+@media (max-width: 720px) { .qc-row { grid-template-columns: 1fr; } .score-panel { grid-template-columns: repeat(2, 1fr); } }
+
+/* Segmented Yes / No / NA control */
+.seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.seg-btn { padding: 6px 13px; font-size: 12.5px; font-weight: 600; background: #fff; border: none; border-right: 1px solid var(--border); cursor: pointer; color: var(--text-soft); transition: background 0.12s; }
+.seg-btn:last-child { border-right: none; }
+.seg-btn:hover { background: #f1f5f9; }
+.seg-btn.active.yes { background: var(--good); color: #fff; }
+.seg-btn.active.no { background: var(--bad); color: #fff; }
+.seg-btn.active.na { background: #64748b; color: #fff; }
+
+/* RAG adherence coloring */
+.rag-good { color: var(--good); font-weight: 700; }
+.rag-warn { color: var(--warn); font-weight: 700; }
+.rag-bad { color: var(--bad); font-weight: 700; }
+
+/* Filter bar */
+.filter-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.filter-bar select { padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 8px; font-size: 13px; background: var(--panel); color: var(--text); }
+.filter-bar select:focus { outline: none; border-color: var(--primary-2); box-shadow: var(--ring); }
+
+/* Insights + detail */
+.mini-head { font-size: 12px; margin: 0 0 4px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
+.detail-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 6px 0 16px; font-size: 13.5px; }
+.detail-grid > div { display: flex; flex-direction: column; gap: 2px; }
+@media (max-width: 780px) { .detail-grid { grid-template-columns: repeat(2, 1fr); } }
+.badge.na { background: #eef2f7; color: #475569; border-color: #e2e8f0; }
+.qc-row.view-row { grid-template-columns: 1fr 64px 1.4fr; }
+
 /* DataTable controls */
 .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .table-search {

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 export interface Column<T> {
   key: string;
@@ -20,6 +20,8 @@ interface DataTableProps<T> {
   emptyText?: string;
   actions?: (row: T) => ReactNode;
   rowClassName?: (row: T) => string;
+  /** Called with the current filtered + sorted rows whenever they change (e.g. for export). */
+  onFilteredRowsChange?: (rows: T[]) => void;
 }
 
 export function DataTable<T>({
@@ -31,6 +33,7 @@ export function DataTable<T>({
   emptyText = 'No records.',
   actions,
   rowClassName,
+  onFilteredRowsChange,
 }: DataTableProps<T>) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -56,6 +59,19 @@ export function DataTable<T>({
       return String(av).localeCompare(String(bv)) * dir;
     });
   }, [filtered, sortKey, sortDir, columns]);
+
+  // Notify the parent of the current filtered + sorted rows (guarded to avoid update loops).
+  const onFilteredRef = useRef(onFilteredRowsChange);
+  onFilteredRef.current = onFilteredRowsChange;
+  const lastSigRef = useRef<string>('');
+  useEffect(() => {
+    const sig = sorted.map((r) => rowKey(r)).join('|');
+    if (sig !== lastSigRef.current) {
+      lastSigRef.current = sig;
+      onFilteredRef.current?.(sorted);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sorted]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const currentPage = Math.min(page, totalPages - 1);

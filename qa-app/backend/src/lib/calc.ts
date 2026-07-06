@@ -31,31 +31,83 @@ export function computeQaTotal(timeliness: number, documentation: number, w: QaW
   return round2((t * w.timeliness + d * w.documentation) * 100);
 }
 
-export interface CallQaScores {
-  opening: number;
-  info: number;
-  deadAir: number;
-  closing: number;
+// --- Call & Case QC scorecard -------------------------------------------------
+// Each parameter is answered Yes / No / NA. Yes earns full points, No earns zero,
+// NA is excluded from both the score and the maximum. Mirrors the Call_QC.xlsx
+// 0 / 3 / NA dropdown model.
+
+export type QcAnswer = 'YES' | 'NO' | 'NA';
+
+/** Points a "Yes" answer is worth (matches the workbook's 3-point scale). */
+export const QC_POINTS_PER_YES = 3;
+
+export interface QcSectionResult {
+  yes: number;
+  no: number;
+  na: number;
+  applicable: number; // yes + no (NA excluded)
+  score: number; // points earned
+  max: number; // max attainable points
+  adherence: number | null; // percent, null when nothing is applicable
 }
 
-export interface CallQaWeights {
-  scaleMax: number;
-  opening: number;
-  info: number;
-  deadAir: number;
-  closing: number;
+/** Scores one section (Call Handling or Case Handling) from its answers. */
+export function scoreQcSection(answers: QcAnswer[], pointsPerYes: number = QC_POINTS_PER_YES): QcSectionResult {
+  let yes = 0;
+  let no = 0;
+  let na = 0;
+  for (const a of answers) {
+    if (a === 'YES') yes++;
+    else if (a === 'NO') no++;
+    else na++;
+  }
+  const applicable = yes + no;
+  const score = yes * pointsPerYes;
+  const max = applicable * pointsPerYes;
+  const adherence = applicable === 0 ? null : round2((score / max) * 100);
+  return { yes, no, na, applicable, score, max, adherence };
 }
 
-/** Combines the four call-quality parameters (each 0..scaleMax) into a weighted 0..100 total. */
-export function computeCallQaTotal(s: CallQaScores, w: CallQaWeights): number {
-  const n = (x: number) => clamp(x, 0, w.scaleMax) / w.scaleMax;
-  return round2(
-    (n(s.opening) * w.opening +
-      n(s.info) * w.info +
-      n(s.deadAir) * w.deadAir +
-      n(s.closing) * w.closing) *
-      100
-  );
+export interface QcResult {
+  callSection: QcSectionResult;
+  caseSection: QcSectionResult;
+  overallScore: number;
+  overallMax: number;
+  overallAdherence: number | null;
+  target: number;
+  criticalFailed: boolean;
+  passed: boolean;
+}
+
+/**
+ * Combines the Call + Case sections into an overall adherence % and pass/fail.
+ * A `criticalFailed` flag (a "No" on a critical parameter) forces a fail regardless of %.
+ */
+export function computeQcResult(
+  callAnswers: QcAnswer[],
+  caseAnswers: QcAnswer[],
+  target: number,
+  pointsPerYes: number = QC_POINTS_PER_YES,
+  criticalFailed: boolean = false
+): QcResult {
+  const callSection = scoreQcSection(callAnswers, pointsPerYes);
+  const caseSection = scoreQcSection(caseAnswers, pointsPerYes);
+  const overallScore = callSection.score + caseSection.score;
+  const overallMax = callSection.max + caseSection.max;
+  const overallAdherence = overallMax === 0 ? null : round2((overallScore / overallMax) * 100);
+  const passed = !criticalFailed && overallAdherence !== null && overallAdherence >= target;
+  return { callSection, caseSection, overallScore, overallMax, overallAdherence, target, criticalFailed, passed };
+}
+
+/** Normalises a raw cell/answer (Yes/No/NA or 3/0/NA) into a QcAnswer, or null if unknown. */
+export function normalizeQcAnswer(value: unknown): QcAnswer | null {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim().toUpperCase();
+  if (s === '' ) return null;
+  if (s === 'YES' || s === 'Y' || s === '3' || s === 'TRUE') return 'YES';
+  if (s === 'NO' || s === 'N' || s === '0' || s === 'FALSE') return 'NO';
+  if (s === 'NA' || s === 'N/A' || s === 'NOT APPLICABLE') return 'NA';
+  return null;
 }
 
 export interface MaintenanceStatusResult {

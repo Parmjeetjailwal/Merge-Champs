@@ -21,5 +21,9 @@ export const config = {
     caseCreationThresholdSecs: num('CALLQA_CASE_CREATION_THRESHOLD_SECS', 120),
     callCloseThresholdSecs: num('CALLQA_CALL_CLOSE_THRESHOLD_SECS', 60),
   },
+  callQc: {
+    target: num('CALLQC_TARGET_PERCENT', 95),
+    pointsPerYes: num('CALLQC_POINTS_PER_YES', 3),
+  },
   pmiApiUrl: process.env.PMI_API_URL ?? '',
 };

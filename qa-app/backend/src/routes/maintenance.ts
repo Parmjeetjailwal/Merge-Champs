@@ -3,8 +3,12 @@ import { prisma } from '../db';
 import { asyncHandler } from '../lib/asyncHandler';
 import { requireRole } from '../middleware/roles';
 import { maintenanceStatus, topByCount, toPeriod, type CountedMember } from '../lib/calc';
+import multer from 'multer';
+import { parseSheet, getField, toDate, resolveEmployee } from '../lib/import';
 
 export const maintenanceRouter = Router();
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 export interface MaintenanceView {
   month: string | null;
@@ -143,6 +147,64 @@ maintenanceRouter.post(
       include: { employee: true },
     });
     res.status(201).json(activity);
+  })
+);
+
+// POST /api/maintenance/upload  (multipart field: file)
+maintenanceRouter.post(
+  '/upload',
+  requireRole('Admin', 'QA Lead'),
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    const file = (req as unknown as { file?: { buffer: Buffer } }).file;
+    if (!file) return res.status(400).json({ error: 'No file uploaded (form field "file").' });
+    const rows = parseSheet(file.buffer);
+    const errors: { row: number; message: string }[] = [];
+    let inserted = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const rowNo = i + 2;
+      const row = rows[i];
+      const title = getField(row, ['Title', 'Activity', 'Description']);
+      const name = getField(row, ['Team Member', 'Employee', 'Name', 'Assigned To']);
+      const idOrEmail = getField(row, ['Email', 'Employee ID']);
+      const ss = toDate(getField(row, ['Scheduled Start']));
+      const se = toDate(getField(row, ['Scheduled End']));
+      const as = toDate(getField(row, ['Actual Start']));
+      const ae = toDate(getField(row, ['Actual End']));
+      if (!title) {
+        errors.push({ row: rowNo, message: 'Missing title.' });
+        continue;
+      }
+      if (!name && !idOrEmail) {
+        errors.push({ row: rowNo, message: 'Missing team member.' });
+        continue;
+      }
+      if (!ss || !se || !as || !ae) {
+        errors.push({ row: rowNo, message: 'Scheduled/Actual start and end are required and must be valid dates.' });
+        continue;
+      }
+      const employee = await resolveEmployee(name, idOrEmail);
+      if (!employee) {
+        errors.push({ row: rowNo, message: 'Could not resolve employee.' });
+        continue;
+      }
+      const { status, exceededByMinutes } = maintenanceStatus(ss, se, as, ae);
+      await prisma.maintenanceActivity.create({
+        data: {
+          title: String(title).trim(),
+          employeeId: employee.id,
+          scheduledStart: ss,
+          scheduledEnd: se,
+          actualStart: as,
+          actualEnd: ae,
+          status,
+          exceededByMinutes,
+          month: toPeriod(ss),
+        },
+      });
+      inserted++;
+    }
+    res.json({ inserted, errors, totalRows: rows.length });
   })
 );
 

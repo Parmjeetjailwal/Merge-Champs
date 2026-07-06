@@ -4,9 +4,10 @@ import { config } from '../src/config';
 import {
   computeUtilizationPercent,
   computeQaTotal,
-  computeCallQaTotal,
+  computeQcResult,
   maintenanceStatus,
   toPeriod,
+  type QcAnswer,
 } from '../src/lib/calc';
 
 const prisma = new PrismaClient();
@@ -16,7 +17,9 @@ const PREVIOUS = '2026-06';
 
 async function main() {
   // Reset (delete in FK-safe order) so the seed is idempotent.
-  await prisma.callQAEvaluation.deleteMany();
+  await prisma.callQcAnswer.deleteMany();
+  await prisma.callQcEvaluation.deleteMany();
+  await prisma.qcParameter.deleteMany();
   await prisma.maintenanceActivity.deleteMany();
   await prisma.qAScore.deleteMany();
   await prisma.qAReport.deleteMany();
@@ -160,36 +163,109 @@ async function main() {
     });
   }
 
-  // --- Call QA evaluations (current period) ---
-  // [agent, ref, opening, info, deadAir, closing, caseSecs, closeSecs, deadAirIncidents, day]
-  const calls: [typeof ana, string, number, number, number, number, number, number, number, number][] = [
-    [cara, 'CALL-5001', 5, 5, 5, 5, 90, 40, 0, 2],
-    [cara, 'CALL-5002', 4, 5, 4, 5, 110, 55, 1, 6],
-    [dan, 'CALL-5003', 3, 3, 2, 4, 180, 80, 3, 4], // breaches both thresholds
-    [dan, 'CALL-5004', 4, 3, 3, 3, 130, 50, 2, 9],
-    [ben, 'CALL-5005', 5, 4, 4, 4, 100, 45, 1, 7],
-    [faisal, 'CALL-5006', 4, 4, 3, 5, 140, 70, 2, 12], // breaches both thresholds
+  // --- Call & Case QC parameters (reference data) ---
+  const CALL_PARAMS = [
+    'All call scripts followed?',
+    'Agent able to understand & paraphrase / narrow down the issue?',
+    'Site ID / IP address captured?',
+    'Multiple repetition of issue, IDs, etc. avoided?',
+    'Call back number captured?',
+    'Dead Air (more than 5 secs) at the beginning or in between the call?',
+    'Case is created in due time & case number given to user over call?',
   ];
-  for (const [agent, ref, opening, info, deadAir, closing, caseSecs, closeSecs, incidents, dayOffset] of calls) {
-    const date = new Date(`${CURRENT}-${String(dayOffset).padStart(2, '0')}T15:00:00`);
-    await prisma.callQAEvaluation.create({
+  const CASE_PARAMS = [
+    'Issue Subject & Description detailing is enough?',
+    'First Public Ownership comment made in accepted time?',
+    'Case Record Type Tagging',
+    'Case Priority Tagging',
+    'Related Case Tagging (for integrated servers)',
+    'System Uptime tagging (for system-down cases)',
+    'System or Server Profile Tagging',
+    'Functional Area tagging is correct?',
+    'L2 Escalation - all details passed on & L2 tagging is done in the case?',
+    'JIRA / Escalation Tagging',
+    'Case activities and comments updated regularly?',
+    'Problem classification, Follow-up classification & Case closure details are updated?',
+    'Case status is correct?',
+  ];
+  // Critical (auto-fail) parameters: a "No" here fails the whole QC regardless of %.
+  const CRITICAL_CODES = new Set(['QC5', 'QC7', 'QC20']);
+  let paramOrder = 1;
+  const paramData = [
+    ...CALL_PARAMS.map((text) => ({ code: `QC${paramOrder}`, section: 'CALL', text, order: paramOrder, critical: CRITICAL_CODES.has(`QC${paramOrder++}`) })),
+    ...CASE_PARAMS.map((text) => ({ code: `QC${paramOrder}`, section: 'CASE', text, order: paramOrder, critical: CRITICAL_CODES.has(`QC${paramOrder++}`) })),
+  ];
+  await prisma.qcParameter.createMany({ data: paramData });
+  const paramRows = await prisma.qcParameter.findMany({ orderBy: { order: 'asc' } });
+  const callParams = paramRows.filter((p) => p.section === 'CALL');
+  const caseParams = paramRows.filter((p) => p.section === 'CASE');
+
+  // --- Call & Case QC evaluations (current + previous period) ---
+  // mk(length, noIdx, naIdx) -> answers defaulting to YES, with NO/NA at the given indices.
+  const mk = (length: number, no: number[] = [], na: number[] = []): QcAnswer[] =>
+    Array.from({ length }, (_, i) => (no.includes(i) ? 'NO' : na.includes(i) ? 'NA' : 'YES'));
+
+  const qcEvals: {
+    product: string;
+    caseNo: string;
+    day: number;
+    period: string;
+    handler: typeof ana;
+    owner: typeof ana;
+    call: QcAnswer[];
+    case: QcAnswer[];
+    escalation: boolean;
+    findings?: string;
+    actionPlan?: string;
+  }[] = [
+    { product: 'VNA', caseNo: '12470153', day: 3, period: CURRENT, handler: cara, owner: dan, call: mk(7), case: mk(13, [], [4, 9]), escalation: false },
+    { product: 'PACS', caseNo: '12470199', day: 6, period: CURRENT, handler: dan, owner: cara, call: mk(7, [5]), case: mk(13, [7], [4]), escalation: true, findings: 'Dead air observed mid-call.', actionPlan: 'Coach on hold etiquette.' },
+    { product: 'VNA', caseNo: '12470222', day: 9, period: CURRENT, handler: ben, owner: ana, call: mk(7, [], [2]), case: mk(13, [10]), escalation: false },
+    { product: 'PACS', caseNo: '12470240', day: 12, period: CURRENT, handler: faisal, owner: ben, call: mk(7), case: mk(13), escalation: false },
+    { product: 'VNA', caseNo: '12470301', day: 14, period: CURRENT, handler: ana, owner: cara, call: mk(7, [6]), case: mk(13), escalation: true, findings: 'Case not created in due time (critical breach).', actionPlan: 'Immediate coaching; re-audit next week.' },
+    { product: 'VNA', caseNo: '12460101', day: 5, period: PREVIOUS, handler: cara, owner: dan, call: mk(7), case: mk(13, [], [4, 9, 11]), escalation: false },
+    { product: 'PACS', caseNo: '12460155', day: 8, period: PREVIOUS, handler: dan, owner: ben, call: mk(7, [1, 5]), case: mk(13, [7, 10]), escalation: true, findings: 'Multiple documentation gaps.', actionPlan: 'Re-training scheduled.' },
+  ];
+  const srCounter: Record<string, number> = {};
+  for (const ev of qcEvals) {
+    const date = new Date(`${ev.period}-${String(ev.day).padStart(2, '0')}T15:00:00`);
+    const criticalFailed =
+      callParams.some((p, i) => p.critical && ev.call[i] === 'NO') ||
+      caseParams.some((p, i) => p.critical && ev.case[i] === 'NO');
+    const result = computeQcResult(ev.call, ev.case, config.callQc.target, config.callQc.pointsPerYes, criticalFailed);
+    srCounter[ev.period] = (srCounter[ev.period] ?? 0) + 1;
+    await prisma.callQcEvaluation.create({
       data: {
-        employeeId: agent.id,
-        callReference: ref,
-        callDate: date,
+        srNo: srCounter[ev.period],
+        product: ev.product,
+        caseNo: ev.caseNo,
+        callDateTime: date,
+        ticketCreatedDateTime: new Date(date.getTime() + 11 * 60000),
+        userName: 'Sample User',
+        callHandledById: ev.handler.id,
+        caseOwnerId: ev.owner.id,
         analystId: faisal.id,
-        callOpeningScore: opening,
-        infoCapturedScore: info,
-        deadAirScore: deadAir,
-        deadAirIncidents: incidents,
-        callClosingScore: closing,
-        caseCreationTimeSecs: caseSecs,
-        caseCreationBreached: caseSecs > config.callQa.caseCreationThresholdSecs,
-        callCloseTimeSecs: closeSecs,
-        callCloseBreached: closeSecs > config.callQa.callCloseThresholdSecs,
-        totalScore: computeCallQaTotal({ opening, info, deadAir, closing }, config.callQa),
-        period: toPeriod(date),
-        comments: null,
+        customerEscalation: ev.escalation,
+        callScore: result.callSection.score,
+        callMax: result.callSection.max,
+        callAdherence: result.callSection.adherence,
+        caseScore: result.caseSection.score,
+        caseMax: result.caseSection.max,
+        caseAdherence: result.caseSection.adherence,
+        overallScore: result.overallScore,
+        overallMax: result.overallMax,
+        overallAdherence: result.overallAdherence,
+        target: result.target,
+        passed: result.passed,
+        findings: ev.findings ?? null,
+        actionPlan: ev.actionPlan ?? null,
+        period: ev.period,
+        answers: {
+          create: [
+            ...callParams.map((p, i) => ({ parameterId: p.id, answer: ev.call[i], comment: null })),
+            ...caseParams.map((p, i) => ({ parameterId: p.id, answer: ev.case[i], comment: null })),
+          ],
+        },
       },
     });
   }

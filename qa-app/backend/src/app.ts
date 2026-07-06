@@ -36,6 +36,22 @@ app.use('/api/call-qa', callQaRouter);
 app.use('/api/jira', jiraRouter);
 app.use('/api/dashboard', dashboardRouter);
 
+// Downloadable Excel import templates (served under /api so the dev proxy forwards them).
+const TEMPLATES: Record<string, string> = {
+  'time-utilization': 'time-utilization-template.xlsx',
+  'qa-scores': 'qa-scores-template.xlsx',
+  kt: 'kt-template.xlsx',
+  maintenance: 'maintenance-template.xlsx',
+  'call-qa': 'call-qa-template.xlsx',
+};
+app.get('/api/templates/:key', (req, res) => {
+  const fileName = TEMPLATES[req.params.key];
+  if (!fileName) return res.status(404).json({ error: 'Unknown template.' });
+  const full = path.join(path.resolve(__dirname, '../../docs'), fileName);
+  if (!fs.existsSync(full)) return res.status(404).json({ error: 'Template not generated. Run: npm run make:template' });
+  return res.download(full, fileName);
+});
+
 // Serve the built frontend (if present) so `npm start` runs the whole app on one port.
 const frontendDist = path.resolve(__dirname, '../../frontend/dist');
 if (fs.existsSync(frontendDist)) {
@@ -47,8 +63,9 @@ if (fs.existsSync(frontendDist)) {
 }
 
 // Central error handler.
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
   // eslint-disable-next-line no-console
   console.error(err);
-  res.status(500).json({ error: err?.message ?? 'Internal server error' });
+  const status = typeof err?.status === 'number' ? err.status : 500;
+  res.status(status).json({ error: err?.message ?? 'Internal server error' });
 });

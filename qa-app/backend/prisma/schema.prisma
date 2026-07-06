@@ -20,8 +20,9 @@ model Employee {
   qaScores        QAScore[]             @relation("AgentScores")
   evaluatedScores QAScore[]             @relation("Evaluator")
   maintenance     MaintenanceActivity[]
-  callEvaluations CallQAEvaluation[]    @relation("Agent")
-  analyzedCalls   CallQAEvaluation[]    @relation("Analyst")
+  qcCallHandled   CallQcEvaluation[]    @relation("CallHandler")
+  qcCaseOwned     CallQcEvaluation[]    @relation("CaseOwner")
+  qcAnalyzed      CallQcEvaluation[]    @relation("QcAnalyst")
 }
 
 model TimeUtilizationRecord {
@@ -99,27 +100,68 @@ model MaintenanceActivity {
   createdAt         DateTime @default(now())
 }
 
-model CallQAEvaluation {
-  id                   String    @id @default(cuid())
-  agent                Employee  @relation("Agent", fields: [employeeId], references: [id])
-  employeeId           String
-  callReference        String
-  callDate             DateTime
-  analyst              Employee? @relation("Analyst", fields: [analystId], references: [id])
-  analystId            String?
-  callOpeningScore     Float
-  infoCapturedScore    Float
-  deadAirScore         Float
-  deadAirIncidents     Int       @default(0)
-  callClosingScore     Float
-  caseCreationTimeSecs Int
-  caseCreationBreached Boolean   @default(false)
-  callCloseTimeSecs    Int
-  callCloseBreached    Boolean   @default(false)
-  totalScore           Float
-  period               String // YYYY-MM
-  comments             String?
-  createdAt            DateTime  @default(now())
+// Reference data: the QC scorecard parameters (Call Handling + Case Handling).
+model QcParameter {
+  id       String         @id @default(cuid())
+  code     String         @unique // QC1..QC20
+  section  String // CALL | CASE
+  text     String
+  order    Int
+  active   Boolean        @default(true)
+  critical Boolean        @default(false) // a "No" on a critical parameter auto-fails the QC
+  answers  CallQcAnswer[]
+}
+
+// One Call & Case QC evaluation for a single case.
+model CallQcEvaluation {
+  id                    String    @id @default(cuid())
+  srNo                  Int?
+  product               String?
+  caseNo                String
+  callDateTime          DateTime?
+  ticketCreatedDateTime DateTime?
+  userName              String?
+
+  callHandledBy   Employee  @relation("CallHandler", fields: [callHandledById], references: [id])
+  callHandledById String
+  caseOwner       Employee  @relation("CaseOwner", fields: [caseOwnerId], references: [id])
+  caseOwnerId     String
+  analyst         Employee? @relation("QcAnalyst", fields: [analystId], references: [id])
+  analystId       String?
+
+  customerEscalation Boolean @default(false)
+
+  callScore        Float // points earned on call-handling params
+  callMax          Float // max points for applicable call-handling params
+  callAdherence    Float? // percent, null when no applicable params
+  caseScore        Float
+  caseMax          Float
+  caseAdherence    Float?
+  overallScore     Float
+  overallMax       Float
+  overallAdherence Float?
+  target           Float // pass threshold in percent (e.g. 95)
+  passed           Boolean @default(false)
+
+  findings   String?
+  actionPlan String?
+  period     String // YYYY-MM
+  createdAt  DateTime @default(now())
+
+  answers CallQcAnswer[]
+}
+
+// One answered parameter within an evaluation.
+model CallQcAnswer {
+  id           String           @id @default(cuid())
+  evaluation   CallQcEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  evaluationId String
+  parameter    QcParameter      @relation(fields: [parameterId], references: [id])
+  parameterId  String
+  answer       String // YES | NO | NA
+  comment      String?
+
+  @@unique([evaluationId, parameterId])
 }
 
 model AppSetting {

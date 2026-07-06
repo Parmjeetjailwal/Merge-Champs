@@ -2,8 +2,12 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../lib/asyncHandler';
 import { requireRole } from '../middleware/roles';
+import multer from 'multer';
+import { parseSheet, getField, toDate } from '../lib/import';
 
 export const ktRouter = Router();
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 function withProgress(joinee: {
   id: string;
@@ -65,6 +69,69 @@ ktRouter.post(
       include: { topics: true },
     });
     res.status(201).json(withProgress(joinee));
+  })
+);
+
+// POST /api/kt/upload  (multipart field: file) — rows of joinee + topic
+ktRouter.post(
+  '/upload',
+  requireRole('Admin', 'QA Lead'),
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    const file = (req as unknown as { file?: { buffer: Buffer } }).file;
+    if (!file) return res.status(400).json({ error: 'No file uploaded (form field "file").' });
+    const rows = parseSheet(file.buffer);
+    const errors: { row: number; message: string }[] = [];
+    let joineesCreated = 0;
+    let topicsAdded = 0;
+    const cache = new Map<string, string>();
+    for (let i = 0; i < rows.length; i++) {
+      const rowNo = i + 2;
+      const row = rows[i];
+      const joineeName = getField(row, ['Joinee', 'Joinee Name', 'Name']);
+      const topicName = getField(row, ['Topic', 'Topic Name']);
+      const statusRaw = getField(row, ['Status']);
+      const team = getField(row, ['Team']);
+      const mentor = getField(row, ['Mentor']);
+      const joinDate = toDate(getField(row, ['Join Date', 'Joined']));
+      const targetDate = toDate(getField(row, ['Target Date', 'Target']));
+      if (!joineeName) {
+        errors.push({ row: rowNo, message: 'Missing joinee name.' });
+        continue;
+      }
+      const key = String(joineeName).trim();
+      let joineeId = cache.get(key.toLowerCase());
+      if (!joineeId) {
+        let joinee = await prisma.joinee.findFirst({ where: { name: key } });
+        if (!joinee) {
+          joinee = await prisma.joinee.create({
+            data: {
+              name: key,
+              joinDate: joinDate ?? new Date(),
+              team: team ? String(team).trim() : null,
+              mentor: mentor ? String(mentor).trim() : null,
+            },
+          });
+          joineesCreated++;
+        }
+        joineeId = joinee.id;
+        cache.set(key.toLowerCase(), joineeId);
+      }
+      if (topicName) {
+        const status = String(statusRaw ?? '').trim().toLowerCase() === 'completed' ? 'Completed' : 'Pending';
+        await prisma.kTTopic.create({
+          data: {
+            joineeId,
+            topicName: String(topicName).trim(),
+            status,
+            completedDate: status === 'Completed' ? new Date() : null,
+            targetDate,
+          },
+        });
+        topicsAdded++;
+      }
+    }
+    res.json({ joineesCreated, topicsAdded, errors, totalRows: rows.length });
   })
 );
 

@@ -113,33 +113,76 @@ export interface MaintenanceView {
   }[];
 }
 
+export type QcAnswer = 'YES' | 'NO' | 'NA';
+
+export interface QcParameter {
+  id: string;
+  code: string;
+  section: 'CALL' | 'CASE';
+  text: string;
+  order: number;
+  active: boolean;
+  critical: boolean;
+}
+
+export interface QcParameters {
+  call: QcParameter[];
+  case: QcParameter[];
+}
+
+export interface CallQcAnswer {
+  parameterId: string;
+  code: string;
+  section: 'CALL' | 'CASE';
+  text: string;
+  order: number;
+  critical: boolean;
+  answer: QcAnswer;
+  comment: string | null;
+}
+
 export interface CallEvaluation {
   id: string;
-  employeeId: string;
-  callReference: string;
-  callDate: string;
-  callOpeningScore: number;
-  infoCapturedScore: number;
-  deadAirScore: number;
-  deadAirIncidents: number;
-  callClosingScore: number;
-  caseCreationTimeSecs: number;
-  caseCreationBreached: boolean;
-  callCloseTimeSecs: number;
-  callCloseBreached: boolean;
-  totalScore: number;
-  comments: string | null;
-  agent: Employee;
+  srNo: number | null;
+  product: string | null;
+  caseNo: string;
+  callDateTime: string | null;
+  ticketCreatedDateTime: string | null;
+  userName: string | null;
+  callHandledById: string;
+  callHandledBy: Employee;
+  caseOwnerId: string;
+  caseOwner: Employee;
+  analystId: string | null;
   analyst: Employee | null;
+  customerEscalation: boolean;
+  callScore: number;
+  callMax: number;
+  callAdherence: number | null;
+  caseScore: number;
+  caseMax: number;
+  caseAdherence: number | null;
+  overallScore: number;
+  overallMax: number;
+  overallAdherence: number | null;
+  target: number;
+  passed: boolean;
+  criticalFailed: boolean;
+  findings: string | null;
+  actionPlan: string | null;
+  period: string;
+  answers: CallQcAnswer[];
 }
 
 export interface CallQaView {
   period: string | null;
+  target: number;
   evaluations: CallEvaluation[];
+  averageScore: number;
+  passRate: number;
   perAgent: { employeeId: string; name: string; evaluations: number; avgScore: number }[];
-  perParameter: { key: string; label: string; avg: number }[];
+  perParameter: { key: string; label: string; section: string; avg: number; applicable: number; critical: boolean }[];
   topImprovementArea: { key: string; label: string; avg: number } | null;
-  thresholds: { caseCreationSecs: number; callCloseSecs: number };
 }
 
 export interface DashboardData {
@@ -178,6 +221,7 @@ export interface AppConfig {
     caseCreationThresholdSecs: number;
     callCloseThresholdSecs: number;
   };
+  callQc: { target: number; pointsPerYes: number };
   timeUtilization: { targetPercent: number };
   pmi: { includeCallScores: boolean };
 }

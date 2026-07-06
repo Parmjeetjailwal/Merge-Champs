@@ -175,6 +175,9 @@ export function TimeUtilization() {
             <button className="btn" type="submit">
               Upload
             </button>
+            <a className="btn secondary" href="/api/templates/time-utilization">
+              Download template
+            </a>
             <span className="muted" style={{ fontSize: 13 }}>
               Columns: Employee Name, Email, Team, Period, Planned Hours, Actual/Billable Hours
             </span>

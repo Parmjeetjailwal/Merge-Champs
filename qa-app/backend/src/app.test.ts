@@ -45,4 +45,24 @@ describe('API integration', () => {
     expect(r.status).toBe(200);
     expect(Array.isArray(r.body.tickets)).toBe(true);
   });
+
+  it('GET /api/call-qa/parameters returns grouped QC parameters', async () => {
+    const r = await request(app).get('/api/call-qa/parameters');
+    expect(r.status).toBe(200);
+    expect(Array.isArray(r.body.call)).toBe(true);
+    expect(Array.isArray(r.body.case)).toBe(true);
+  });
+
+  it('blocks Call QC create for a Team Member', async () => {
+    const r = await request(app).post('/api/call-qa').set('x-role', 'Team Member').send({ caseNo: 'X' });
+    expect(r.status).toBe(403);
+  });
+
+  it('rejects a Call QC create with unanswered parameters', async () => {
+    const r = await request(app)
+      .post('/api/call-qa')
+      .set('x-role', 'Call QA Analyst')
+      .send({ caseNo: 'TEST-1', callHandledById: 'missing', caseOwnerId: 'missing', answers: [] });
+    expect(r.status).toBe(400);
+  });
 });
