@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, apiError } from '../api';
 import { useToast } from '../ui/Toast';
+import { SectionsManager } from '../ui/SectionsManager';
 import type { AppConfig } from '../types';
 
 export function Settings() {
@@ -48,46 +49,32 @@ export function Settings() {
 
       <div className="grid grid-2">
         <div className="card">
-          <h3>Jira QA weighting</h3>
-          <p className="metric-sub">Timeliness + documentation should sum to 1.</p>
+          <h3>Call QC</h3>
+          <p className="metric-sub">Call-handling scorecard. Yes = full marks, No = zero, NA excluded. Pass when adherence ≥ target.</p>
           <label className="field">
-            Timeliness weight
-            <input type="number" step={0.05} min={0} max={1} value={cfg.qa.timeliness}
-              onChange={(e) => setCfg({ ...cfg, qa: { ...cfg.qa, timeliness: n(e.target.value) } })} />
+            Pass target (% adherence)
+            <input type="number" min={0} max={100} value={cfg.callQc.target}
+              onChange={(e) => setCfg({ ...cfg, callQc: { ...cfg.callQc, target: n(e.target.value) } })} />
           </label>
           <label className="field">
-            Documentation weight
-            <input type="number" step={0.05} min={0} max={1} value={cfg.qa.documentation}
-              onChange={(e) => setCfg({ ...cfg, qa: { ...cfg.qa, documentation: n(e.target.value) } })} />
-          </label>
-          <label className="field">
-            Scale max
-            <input type="number" min={1} value={cfg.qa.scaleMax}
-              onChange={(e) => setCfg({ ...cfg, qa: { ...cfg.qa, scaleMax: n(e.target.value) } })} />
+            Points per &quot;Yes&quot;
+            <input type="number" min={1} value={cfg.callQc.pointsPerYes}
+              onChange={(e) => setCfg({ ...cfg, callQc: { ...cfg.callQc, pointsPerYes: n(e.target.value) } })} />
           </label>
         </div>
 
         <div className="card">
-          <h3>Call &amp; Case QC</h3>
-          <p className="metric-sub">Yes = full marks, No = zero, NA excluded. Pass when overall adherence ≥ target.</p>
+          <h3>Case QC</h3>
+          <p className="metric-sub">Case-handling scorecard. Yes = full marks, No = zero, NA excluded. Pass when adherence ≥ target.</p>
           <label className="field">
-            Pass target (% overall adherence)
-            <input
-              type="number"
-              min={0}
-              max={100}
-              value={cfg.callQc.target}
-              onChange={(e) => setCfg({ ...cfg, callQc: { ...cfg.callQc, target: n(e.target.value) } })}
-            />
+            Pass target (% adherence)
+            <input type="number" min={0} max={100} value={cfg.caseQc.target}
+              onChange={(e) => setCfg({ ...cfg, caseQc: { ...cfg.caseQc, target: n(e.target.value) } })} />
           </label>
           <label className="field">
             Points per &quot;Yes&quot;
-            <input
-              type="number"
-              min={1}
-              value={cfg.callQc.pointsPerYes}
-              onChange={(e) => setCfg({ ...cfg, callQc: { ...cfg.callQc, pointsPerYes: n(e.target.value) } })}
-            />
+            <input type="number" min={1} value={cfg.caseQc.pointsPerYes}
+              onChange={(e) => setCfg({ ...cfg, caseQc: { ...cfg.caseQc, pointsPerYes: n(e.target.value) } })} />
           </label>
         </div>
 
@@ -102,7 +89,7 @@ export function Settings() {
 
         <div className="card">
           <h3>PMI export</h3>
-          <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <label className="check-inline">
             <input type="checkbox" checked={cfg.pmi.includeCallScores}
               onChange={(e) => setCfg({ ...cfg, pmi: { includeCallScores: e.target.checked } })} />
             Include call quality scores in the QA/PMI report
@@ -112,6 +99,10 @@ export function Settings() {
 
       <div style={{ marginTop: 16 }}>
         <button className="btn" onClick={save}>Save settings</button>
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <SectionsManager />
       </div>
     </div>
   );

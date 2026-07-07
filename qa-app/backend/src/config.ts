@@ -25,5 +25,9 @@ export const config = {
     target: num('CALLQC_TARGET_PERCENT', 95),
     pointsPerYes: num('CALLQC_POINTS_PER_YES', 3),
   },
+  caseQc: {
+    target: num('CASEQC_TARGET_PERCENT', 95),
+    pointsPerYes: num('CASEQC_POINTS_PER_YES', 3),
+  },
   pmiApiUrl: process.env.PMI_API_URL ?? '',
 };

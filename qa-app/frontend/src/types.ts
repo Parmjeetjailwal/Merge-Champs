@@ -85,6 +85,38 @@ export interface Joinee {
   mentor: string | null;
   topics: KTTopic[];
   progress: { completed: number; total: number; percent: number; overdue: number };
+  accesses?: JoineeAccess[];
+  accessProgress: { granted: number; pending: number; total: number; percent: number };
+}
+
+export type AccessStatus = 'Pending' | 'Granted' | 'NA';
+
+export interface AccessItem {
+  id: string;
+  projectId: string;
+  name: string;
+  order: number;
+  active: boolean;
+}
+
+export interface Project {
+  id: string;
+  key: string;
+  name: string;
+  active: boolean;
+  order: number;
+  accessItems: AccessItem[];
+}
+
+export interface JoineeAccess {
+  id: string;
+  joineeId: string;
+  accessItemId: string;
+  status: AccessStatus;
+  grantedDate: string | null;
+  notes: string | null;
+  requestedBy: string | null;
+  accessItem: AccessItem & { project: Project };
 }
 
 export interface MaintenanceActivity {
@@ -123,6 +155,7 @@ export interface QcParameter {
   order: number;
   active: boolean;
   critical: boolean;
+  serial?: number;
 }
 
 export interface QcParameters {
@@ -143,16 +176,17 @@ export interface CallQcAnswer {
 
 export interface CallEvaluation {
   id: string;
+  kind: 'CALL' | 'CASE';
   srNo: number | null;
   product: string | null;
   caseNo: string;
   callDateTime: string | null;
   ticketCreatedDateTime: string | null;
   userName: string | null;
-  callHandledById: string;
-  callHandledBy: Employee;
-  caseOwnerId: string;
-  caseOwner: Employee;
+  callHandledById: string | null;
+  callHandledBy: Employee | null;
+  caseOwnerId: string | null;
+  caseOwner: Employee | null;
   analystId: string | null;
   analyst: Employee | null;
   customerEscalation: boolean;
@@ -188,7 +222,7 @@ export interface CallQaView {
 export interface DashboardData {
   period: string;
   previousPeriod: string;
-  deltas: { utilization: number; qa: number; callQa: number; maintenanceOnTime: number };
+  deltas: { utilization: number; qa: number; callQa: number; caseQa: number; maintenanceOnTime: number };
   timeUtilization: { top: TimeRecord[]; bottom: TimeRecord[]; count: number; averageUtilization: number; target: number };
   qa: { averageScore: number; members: { employeeId: string; name: string; avgTotalScore: number; ticketsEvaluated: number }[] };
   kt: { joinees: { id: string; name: string; completed: number; total: number; percent: number }[] };
@@ -202,16 +236,38 @@ export interface DashboardData {
     topImprovementArea: { key: string; label: string; avg: number } | null;
     perAgent: { employeeId: string; name: string; evaluations: number; avgScore: number }[];
   };
-  alerts: {
-    belowTarget: { target: number; employees: { name: string; utilizationPercent: number }[] };
-    overdueKT: { joinee: string; topic: string }[];
-    repeatMissers: { employeeId: string; name: string; exceededCount: number }[];
-    callBreaches: number;
+  caseQa: {
+    averageScore: number;
+    topImprovementArea: { key: string; label: string; avg: number } | null;
+    perAgent: { employeeId: string; name: string; evaluations: number; avgScore: number }[];
+  };
+  failedSla: {
+    count: number;
+    cases: {
+      caseNo: string;
+      kind: 'CALL' | 'CASE';
+      section: string;
+      owner: string;
+      product: string | null;
+      adherence: number | null;
+      target: number;
+      criticalFailed: boolean;
+    }[];
   };
 }
 
+export interface NavSection {
+  id: string;
+  key: string;
+  label: string;
+  path: string;
+  icon: string;
+  order: number;
+  enabled: boolean;
+  adminOnly: boolean;
+}
+
 export interface AppConfig {
-  qa: { scaleMax: number; timeliness: number; documentation: number };
   callQa: {
     scaleMax: number;
     opening: number;
@@ -222,6 +278,7 @@ export interface AppConfig {
     callCloseThresholdSecs: number;
   };
   callQc: { target: number; pointsPerYes: number };
+  caseQc: { target: number; pointsPerYes: number };
   timeUtilization: { targetPercent: number };
   pmi: { includeCallScores: boolean };
 }

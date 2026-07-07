@@ -9,6 +9,9 @@ import { qaScoresRouter } from './routes/qaScores';
 import { ktRouter } from './routes/kt';
 import { maintenanceRouter } from './routes/maintenance';
 import { callQaRouter } from './routes/callQa';
+import { caseQaRouter } from './routes/caseQa';
+import { qcParamsRouter } from './routes/qcParams';
+import { sectionsRouter } from './routes/sections';
 import { dashboardRouter } from './routes/dashboard';
 import { settingsRouter } from './routes/settings';
 import { authRouter } from './routes/auth';
@@ -33,6 +36,9 @@ app.use('/api/qa-scores', qaScoresRouter);
 app.use('/api/kt', ktRouter);
 app.use('/api/maintenance', maintenanceRouter);
 app.use('/api/call-qa', callQaRouter);
+app.use('/api/case-qa', caseQaRouter);
+app.use('/api/qc-parameters', qcParamsRouter);
+app.use('/api/sections', sectionsRouter);
 app.use('/api/jira', jiraRouter);
 app.use('/api/dashboard', dashboardRouter);
 
@@ -43,6 +49,7 @@ const TEMPLATES: Record<string, string> = {
   kt: 'kt-template.xlsx',
   maintenance: 'maintenance-template.xlsx',
   'call-qa': 'call-qa-template.xlsx',
+  'case-qa': 'call-qa-template.xlsx',
 };
 app.get('/api/templates/:key', (req, res) => {
   const fileName = TEMPLATES[req.params.key];

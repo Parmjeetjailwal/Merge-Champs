@@ -6,6 +6,7 @@ import { buildPeriodView } from './timeUtilization';
 import { buildQaReportPayload } from './qaScores';
 import { buildMaintenanceView } from './maintenance';
 import { buildCallQaView } from './callQa';
+import { buildCaseQaView } from './caseQa';
 import { getSettings } from '../settings';
 
 export const dashboardRouter = Router();
@@ -34,18 +35,19 @@ dashboardRouter.get(
     const prev = previousPeriod(period);
     const settings = await getSettings();
 
-    const [timeView, qaPayload, maintenanceView, callView, joinees, prevTime, prevQa, prevMaint, prevCall, overdueTopics] =
+    const [timeView, qaPayload, maintenanceView, callView, caseView, joinees, prevTime, prevQa, prevMaint, prevCall, prevCase] =
       await Promise.all([
         buildPeriodView(period),
         buildQaReportPayload(period),
         buildMaintenanceView(period),
         buildCallQaView(period),
+        buildCaseQaView(period),
         prisma.joinee.findMany({ include: { topics: true }, orderBy: { joinDate: 'desc' } }),
         buildPeriodView(prev),
         buildQaReportPayload(prev),
         buildMaintenanceView(prev),
         buildCallQaView(prev),
-        prisma.kTTopic.findMany({ where: { status: 'Pending', targetDate: { lt: new Date() } }, include: { joinee: true } }),
+        buildCaseQaView(prev),
       ]);
 
     const membersAvg = (members: { avgTotalScore: number }[]) =>
@@ -55,6 +57,7 @@ dashboardRouter.get(
 
     const qaAvg = membersAvg(qaPayload.teamMembers);
     const callAvg = agentsAvg(callView.perAgent);
+    const caseAvg = agentsAvg(caseView.perAgent);
     const utilAvg = avgUtil(timeView.records as { utilizationPercent: number }[]);
     const maintOnTime = onTimePercent(maintenanceView.activities as { status: string }[]);
 
@@ -62,15 +65,27 @@ dashboardRouter.get(
       utilization: round2(utilAvg - avgUtil(prevTime.records as { utilizationPercent: number }[])),
       qa: round2(qaAvg - membersAvg(prevQa.teamMembers)),
       callQa: round2(callAvg - agentsAvg(prevCall.perAgent)),
+      caseQa: round2(caseAvg - agentsAvg(prevCase.perAgent)),
       maintenanceOnTime: maintOnTime - onTimePercent(prevMaint.activities as { status: string }[]),
     };
 
     const target = settings.timeUtilization.targetPercent;
-    const belowTarget = (timeView.records as { employee: { name: string }; utilizationPercent: number }[])
-      .filter((r) => r.utilizationPercent < target)
-      .map((r) => ({ name: r.employee.name, utilizationPercent: r.utilizationPercent }));
 
-    const callBreaches = (callView.evaluations as { passed: boolean }[]).filter((e) => !e.passed).length;
+    // Failed SLA cases: Call/Case QC evaluations that did not pass (incl. critical fails).
+    const failedCases = [...callView.evaluations, ...caseView.evaluations]
+      .filter((e) => !e.passed)
+      .map((e) => ({
+        caseNo: e.caseNo,
+        kind: e.kind,
+        section: e.kind === 'CALL' ? 'Call QA' : 'Case QA',
+        owner: (e.kind === 'CALL' ? e.callHandledBy?.name : e.caseOwner?.name) ?? '—',
+        product: e.product ?? null,
+        adherence: e.overallAdherence,
+        target: e.target,
+        criticalFailed: e.criticalFailed,
+      }))
+      .sort((a, b) => (a.adherence ?? 0) - (b.adherence ?? 0))
+      .slice(0, 12);
 
     const ktSummary = joinees.map((j) => {
       const total = j.topics.length;
@@ -115,12 +130,12 @@ dashboardRouter.get(
         topImprovementArea: callView.topImprovementArea,
         perAgent: callView.perAgent,
       },
-      alerts: {
-        belowTarget: { target, employees: belowTarget },
-        overdueKT: overdueTopics.map((t) => ({ joinee: t.joinee.name, topic: t.topicName })),
-        repeatMissers: maintenanceView.missedTimeline.filter((m) => m.exceededCount > 1),
-        callBreaches,
+      caseQa: {
+        averageScore: caseAvg,
+        topImprovementArea: caseView.topImprovementArea,
+        perAgent: caseView.perAgent,
       },
+      failedSla: { count: failedCases.length, cases: failedCases },
     });
   })
 );

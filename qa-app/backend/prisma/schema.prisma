@@ -71,6 +71,7 @@ model Joinee {
   mentor    String?
   createdAt DateTime  @default(now())
   topics    KTTopic[]
+  accesses  JoineeAccess[]
 }
 
 model KTTopic {
@@ -112,9 +113,10 @@ model QcParameter {
   answers  CallQcAnswer[]
 }
 
-// One Call & Case QC evaluation for a single case.
+// One Call or Case QC evaluation for a single case. `kind` selects which scorecard it belongs to.
 model CallQcEvaluation {
   id                    String    @id @default(cuid())
+  kind                  String    @default("CALL") // CALL | CASE
   srNo                  Int?
   product               String?
   caseNo                String
@@ -122,10 +124,10 @@ model CallQcEvaluation {
   ticketCreatedDateTime DateTime?
   userName              String?
 
-  callHandledBy   Employee  @relation("CallHandler", fields: [callHandledById], references: [id])
-  callHandledById String
-  caseOwner       Employee  @relation("CaseOwner", fields: [caseOwnerId], references: [id])
-  caseOwnerId     String
+  callHandledBy   Employee? @relation("CallHandler", fields: [callHandledById], references: [id])
+  callHandledById String?
+  caseOwner       Employee? @relation("CaseOwner", fields: [caseOwnerId], references: [id])
+  caseOwnerId     String?
   analyst         Employee? @relation("QcAnalyst", fields: [analystId], references: [id])
   analystId       String?
 
@@ -192,4 +194,57 @@ model KTTemplateTopic {
   template   KTTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   templateId String
   topicName  String
+}
+
+// Data-driven navigation/section registry so sections can be reordered/renamed/toggled in-app.
+model NavSection {
+  id        String   @id @default(cuid())
+  key       String   @unique // stable route/component key: dashboard, call-qa, ...
+  label     String
+  path      String
+  icon      String // Lucide icon name
+  order     Int      @default(0)
+  enabled   Boolean  @default(true)
+  adminOnly Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// A project whose new joinees need a standard set of accesses (CloudOps, VNA, PACS).
+model Project {
+  id          String       @id @default(cuid())
+  key         String       @unique // CLOUDOPS | VNA | PACS
+  name        String
+  active      Boolean      @default(true)
+  order       Int          @default(0)
+  createdAt   DateTime     @default(now())
+  accessItems AccessItem[]
+}
+
+// A standard access that belongs to a project's access list.
+model AccessItem {
+  id        String         @id @default(cuid())
+  project   Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  name      String
+  order     Int            @default(0)
+  active    Boolean        @default(true)
+  grants    JoineeAccess[]
+
+  @@unique([projectId, name])
+}
+
+// Per-joinee provisioning status for a single access.
+model JoineeAccess {
+  id           String     @id @default(cuid())
+  joinee       Joinee     @relation(fields: [joineeId], references: [id], onDelete: Cascade)
+  joineeId     String
+  accessItem   AccessItem @relation(fields: [accessItemId], references: [id], onDelete: Cascade)
+  accessItemId String
+  status       String     @default("Pending") // Pending | Granted | NA
+  grantedDate  DateTime?
+  notes        String?
+  requestedBy  String?
+  createdAt    DateTime   @default(now())
+
+  @@unique([joineeId, accessItemId])
 }

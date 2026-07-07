@@ -8,4 +8,5 @@ export const can = {
   kt: (r: Role) => WRITE_QA.includes(r),
   maintenance: (r: Role) => WRITE_QA.includes(r),
   callQa: (r: Role) => r === 'Admin' || r === 'Call QA Analyst',
+  caseQa: (r: Role) => r === 'Admin' || r === 'Call QA Analyst',
 };

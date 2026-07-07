@@ -87,8 +87,8 @@ export async function buildQaReportPayload(period: string): Promise<QaReportPayl
   if (settings.pmi.includeCallScores) {
     const calls = await prisma.callQcEvaluation.findMany({ where: { period } });
     const byAgent = new Map<string, { sum: number; n: number }>();
-    const add = (id: string, v: number | null) => {
-      if (v === null) return;
+    const add = (id: string | null, v: number | null) => {
+      if (!id || v === null) return;
       const g = byAgent.get(id) ?? { sum: 0, n: 0 };
       g.sum += v;
       g.n++;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Clock, ClipboardCheck, PhoneCall, GraduationCap, Wrench, Bell, TrendingUp } from 'lucide-react';
+import { Clock, ClipboardCheck, PhoneCall, GraduationCap, Wrench, TrendingUp, AlertTriangle } from 'lucide-react';
 import { api, apiError } from '../api';
 import { TrendChart } from '../ui/TrendChart';
 import type { DashboardData, TrendPoint } from '../types';
@@ -21,12 +21,43 @@ function Delta({ value, unit = '' }: { value: number; unit?: string }) {
   );
 }
 
+/** Minimal inline SVG sparkline for the KPI strip. */
+function Sparkline({ points, color }: { points: number[]; color: string }) {
+  const w = 96;
+  const h = 30;
+  if (points.length < 2) return <svg width={w} height={h} aria-hidden />;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const step = w / (points.length - 1);
+  const coords = points.map((v, i) => `${(i * step).toFixed(1)},${(h - ((v - min) / range) * (h - 4) - 2).toFixed(1)}`);
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden>
+      <polyline points={coords.join(' ')} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function Kpi({ label, value, delta, unit = '', points, color }: { label: string; value: number | string; delta: number; unit?: string; points: number[]; color: string }) {
+  return (
+    <div className="kpi">
+      <div className="kpi-top">
+        <span className="kpi-label">{label}</span>
+        <Delta value={delta} unit={unit} />
+      </div>
+      <div className="kpi-value">{value}{unit}</div>
+      <Sparkline points={points} color={color} />
+    </div>
+  );
+}
+
 export function Dashboard() {
   const [period, setPeriod] = useState<string>(currentMonth());
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState('');
   const [qaTrend, setQaTrend] = useState<TrendPoint[]>([]);
   const [callTrend, setCallTrend] = useState<TrendPoint[]>([]);
+  const [caseTrend, setCaseTrend] = useState<TrendPoint[]>([]);
   const [utilTrend, setUtilTrend] = useState<TrendPoint[]>([]);
 
   useEffect(() => {
@@ -40,11 +71,9 @@ export function Dashboard() {
   useEffect(() => {
     api.get<TrendPoint[]>('/qa-scores/trend').then((r) => setQaTrend(r.data)).catch(() => {});
     api.get<TrendPoint[]>('/call-qa/trend').then((r) => setCallTrend(r.data)).catch(() => {});
+    api.get<TrendPoint[]>('/case-qa/trend').then((r) => setCaseTrend(r.data)).catch(() => {});
     api.get<TrendPoint[]>('/time-utilization/trend').then((r) => setUtilTrend(r.data)).catch(() => {});
   }, []);
-
-  const noAlerts = (a: DashboardData['alerts']) =>
-    a.belowTarget.employees.length === 0 && a.overdueKT.length === 0 && a.repeatMissers.length === 0 && a.callBreaches === 0;
 
   return (
     <div>
@@ -61,6 +90,45 @@ export function Dashboard() {
 
       {data && (
         <>
+          <div className="kpi-strip">
+            <Kpi label="Utilization" value={data.timeUtilization.averageUtilization} unit="%" delta={data.deltas.utilization} points={utilTrend.map((t) => t.value)} color="#d97706" />
+            <Kpi label="Jira QA" value={data.qa.averageScore} delta={data.deltas.qa} points={qaTrend.map((t) => t.value)} color="#2563eb" />
+            <Kpi label="Call QA" value={data.callQa.averageScore} unit="%" delta={data.deltas.callQa} points={callTrend.map((t) => t.value)} color="#16a34a" />
+            <Kpi label="Case QA" value={data.caseQa.averageScore} unit="%" delta={data.deltas.caseQa} points={caseTrend.map((t) => t.value)} color="#7c3aed" />
+            <Kpi label="Maint. on-time" value={data.maintenance.onTimePercent} unit="%" delta={data.deltas.maintenanceOnTime} points={[]} color="#0ea5e9" />
+          </div>
+
+          <div className="card sla-card" style={{ marginBottom: 18 }}>
+            <div className="card-head">
+              <span className="chip red">
+                <AlertTriangle size={18} />
+              </span>
+              <h3>Failed SLA cases</h3>
+              {data.failedSla.count > 0 && <span className="badge bad" style={{ marginLeft: 'auto' }}>{data.failedSla.count}</span>}
+            </div>
+            {data.failedSla.cases.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>No SLA failures this period. ✅</p>
+            ) : (
+              <ul className="list">
+                {data.failedSla.cases.map((c, i) => (
+                  <li key={`${c.caseNo}-${c.kind}-${i}`}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span className="badge bad">FAIL</span>
+                      {c.criticalFailed && <span className="badge bad">CRITICAL</span>}
+                      <b className="mono">{c.caseNo}</b>
+                      <span className="muted">{c.section}</span>
+                      <span className="muted">· {c.owner}</span>
+                      {c.product && <span className="muted">· {c.product}</span>}
+                    </span>
+                    <b className="mono" style={{ color: 'var(--bad)' }}>
+                      {c.adherence ?? '—'}% <span className="muted" style={{ fontWeight: 400 }}>/ {c.target}%</span>
+                    </b>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="grid grid-3">
             {/* Time Utilization */}
             <div className="card">
@@ -152,13 +220,39 @@ export function Dashboard() {
               </Link>
             </div>
 
-            {/* New Joinee KT */}
+            {/* Case QA */}
+            <div className="card">
+              <div className="card-head">
+                <span className="chip green">
+                  <ClipboardCheck size={18} />
+                </span>
+                <h3>Case QA</h3>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <div className="metric">{data.caseQa.averageScore}</div>
+                <Delta value={data.deltas.caseQa} />
+              </div>
+              <p className="metric-sub">Average case QC adherence %</p>
+              {data.caseQa.topImprovementArea ? (
+                <p>
+                  Top improvement area: <span className="badge warn">{data.caseQa.topImprovementArea.label}</span>{' '}
+                  <span className="muted">(avg {data.caseQa.topImprovementArea.avg})</span>
+                </p>
+              ) : (
+                <p className="muted">No evaluations yet.</p>
+              )}
+              <Link className="link" to="/case-qa">
+                View details →
+              </Link>
+            </div>
+
+            {/* KT OPS */}
             <div className="card">
               <div className="card-head">
                 <span className="chip violet">
                   <GraduationCap size={18} />
                 </span>
-                <h3>New Joinee KT Tracker</h3>
+                <h3>KT OPS</h3>
               </div>
               <ul className="list">
                 {data.kt.joinees.map((j) => (
@@ -205,51 +299,6 @@ export function Dashboard() {
               <Link className="link" to="/maintenance">
                 View details →
               </Link>
-            </div>
-
-            {/* Alerts */}
-            <div className="card">
-              <div className="card-head">
-                <span className="chip red">
-                  <Bell size={18} />
-                </span>
-                <h3>Alerts</h3>
-              </div>
-              <ul className="list">
-                {data.alerts.belowTarget.employees.map((e) => (
-                  <li key={e.name}>
-                    <span>
-                      <span className="badge warn">BELOW TARGET</span> {e.name}
-                    </span>
-                    <b className="mono">{e.utilizationPercent}%</b>
-                  </li>
-                ))}
-                {data.alerts.overdueKT.map((o, i) => (
-                  <li key={`kt${i}`}>
-                    <span>
-                      <span className="badge bad">OVERDUE KT</span> {o.joinee}
-                    </span>
-                    <span className="muted">{o.topic}</span>
-                  </li>
-                ))}
-                {data.alerts.repeatMissers.map((m) => (
-                  <li key={m.employeeId}>
-                    <span>
-                      <span className="badge bad">REPEAT MISS</span> {m.name}
-                    </span>
-                    <b className="mono">{m.exceededCount}</b>
-                  </li>
-                ))}
-                {data.alerts.callBreaches > 0 && (
-                  <li>
-                    <span>
-                      <span className="badge bad">QC FAILS</span> below pass target
-                    </span>
-                    <b className="mono">{data.alerts.callBreaches}</b>
-                  </li>
-                )}
-                {noAlerts(data.alerts) && <li className="muted">No alerts. All clear.</li>}
-              </ul>
             </div>
           </div>
 

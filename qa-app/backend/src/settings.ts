@@ -13,6 +13,7 @@ export interface AppConfig {
     callCloseThresholdSecs: number;
   };
   callQc: { target: number; pointsPerYes: number };
+  caseQc: { target: number; pointsPerYes: number };
   timeUtilization: { targetPercent: number };
   pmi: { includeCallScores: boolean };
 }
@@ -26,6 +27,7 @@ function defaults(): AppConfig {
     },
     callQa: { ...envConfig.callQa },
     callQc: { ...envConfig.callQc },
+    caseQc: { ...envConfig.caseQc },
     timeUtilization: { targetPercent: 85 },
     pmi: { includeCallScores: false },
   };

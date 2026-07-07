@@ -5,7 +5,8 @@ import { useAuth } from '../AuthContext';
 import { can } from '../perms';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Confirm';
-import type { Joinee, KTTemplate, KTTopic } from '../types';
+import { exportCsv } from '../lib/exportCsv';
+import type { AccessStatus, Employee, Joinee, JoineeAccess, KTTemplate, KTTopic, Project } from '../types';
 
 export function KTTracker() {
   const { role } = useRole();
@@ -15,18 +16,33 @@ export function KTTracker() {
   const confirm = useConfirm();
   const [joinees, setJoinees] = useState<Joinee[]>([]);
   const [templates, setTemplates] = useState<KTTemplate[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [applyChoice, setApplyChoice] = useState<Record<string, string>>({});
+  const [accessChoice, setAccessChoice] = useState<Record<string, string>>({});
+  const [previewProject, setPreviewProject] = useState('');
+  const [accessOwner, setAccessOwner] = useState('');
+  const [pendingOnly, setPendingOnly] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({ name: '', joinDate: '', team: '', mentor: '', topics: '' });
   const [newTopic, setNewTopic] = useState<Record<string, string>>({});
+  const [selectedJoineeId, setSelectedJoineeId] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
-    api.get<Joinee[]>('/kt/joinees').then((r) => setJoinees(r.data)).catch((e) => setError(apiError(e)));
+    api
+      .get<Joinee[]>('/kt/joinees')
+      .then((r) => {
+        setJoinees(r.data);
+        setSelectedJoineeId((cur) => (cur && r.data.some((j) => j.id === cur) ? cur : r.data[0]?.id ?? ''));
+      })
+      .catch((e) => setError(apiError(e)));
   };
   useEffect(load, []);
   useEffect(() => {
     api.get<KTTemplate[]>('/kt/templates').then((r) => setTemplates(r.data)).catch(() => {});
+    api.get<Project[]>('/kt/projects').then((r) => setProjects(r.data)).catch(() => {});
+    api.get<Employee[]>('/employees').then((r) => setEmployees(r.data)).catch(() => {});
   }, []);
 
   const onImport = async (e: React.FormEvent) => {
@@ -147,12 +163,196 @@ export function KTTracker() {
     }
   };
 
+  const applyAccessList = async (joineeId: string) => {
+    const projectId = accessChoice[joineeId];
+    if (!projectId) return;
+    try {
+      const r = await api.post(`/kt/joinees/${joineeId}/access/apply`, { projectId });
+      setAccessChoice({ ...accessChoice, [joineeId]: '' });
+      const added = (r.data as { added: number }).added;
+      toast.success(added > 0 ? `Added ${added} access item(s).` : 'Access list already applied.');
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const patchAccess = async (id: string, data: Record<string, unknown>, successMsg?: string) => {
+    try {
+      await api.patch(`/kt/joinee-access/${id}`, data);
+      if (successMsg) toast.success(successMsg);
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  // Mark an access complete (Granted) or back to Pending, mirroring KT topic toggling.
+  const setAccessStatus = (a: JoineeAccess, status: AccessStatus) => {
+    const data: Record<string, unknown> = { status };
+    // Attribute ownership on completion to the selected owner (or the current admin).
+    if (status === 'Granted') data.requestedBy = accessOwner || a.requestedBy || user?.email || null;
+    patchAccess(a.id, data);
+  };
+
+  const markAllAccessComplete = async (j: Joinee) => {
+    const pending = (j.accesses ?? []).filter((a) => a.status !== 'Granted');
+    if (pending.length === 0) return;
+    const ok = await confirm({
+      title: 'Mark all complete',
+      message: `Mark all ${pending.length} outstanding access item(s) complete for ${j.name}?`,
+      confirmLabel: 'Mark complete',
+    });
+    if (!ok) return;
+    try {
+      await Promise.all(
+        pending.map((a) =>
+          api.patch(`/kt/joinee-access/${a.id}`, {
+            status: 'Granted',
+            requestedBy: accessOwner || a.requestedBy || user?.email || null,
+          })
+        )
+      );
+      toast.success('All access items marked complete.');
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
+  const deleteAccess = async (a: JoineeAccess) => {
+    const ok = await confirm({
+      title: 'Remove access',
+      message: `Remove "${a.accessItem.name}" from this joinee?`,
+      danger: true,
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/kt/joinee-access/${a.id}`);
+      toast.success('Access removed.');
+      load();
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+
   return (
     <div>
-      <h2 className="page-title">New Joinee KT Tracker</h2>
-      <p className="page-sub">Track knowledge-transfer topics covered for each new joinee.</p>
+      <h2 className="page-title">KT OPS</h2>
+      <p className="page-sub">Onboarding operations: knowledge transfer and project access provisioning for new joinees.</p>
 
       {error && <div className="notice error">{error}</div>}
+
+      {projects.length > 0 && (
+        <div className="card no-print" style={{ marginBottom: 18 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+            <h3 style={{ margin: 0 }}>Access lists</h3>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label className="muted" style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                Owner
+                <select
+                  value={accessOwner}
+                  onChange={(e) => setAccessOwner(e.target.value)}
+                  style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 8 }}
+                >
+                  <option value="">All owners</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.name}>
+                      {emp.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="muted" style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input type="checkbox" checked={pendingOnly} onChange={(e) => setPendingOnly(e.target.checked)} />
+                Pending only
+              </label>
+              <label className="muted" style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                Project
+                <select
+                  value={previewProject}
+                  onChange={(e) => setPreviewProject(e.target.value)}
+                  style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 8 }}
+                >
+                  <option value="">Select a project…</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="btn secondary sm"
+                onClick={() =>
+                  exportCsv(
+                    'kt-ops-access.csv',
+                    joinees.flatMap((j) =>
+                      (j.accesses ?? []).map((a) => ({
+                        Joinee: j.name,
+                        Project: a.accessItem.project.name,
+                        Access: a.accessItem.name,
+                        Status: a.status,
+                        'Granted Date': a.grantedDate ? a.grantedDate.slice(0, 10) : '',
+                        Owner: a.requestedBy ?? '',
+                      }))
+                    )
+                  )
+                }
+              >
+                Export CSV
+              </button>
+            </div>
+          </div>
+          {accessOwner &&
+            (() => {
+              const owned = joinees.flatMap((j) => (j.accesses ?? []).filter((a) => a.requestedBy === accessOwner));
+              const complete = owned.filter((a) => a.status === 'Granted').length;
+              const pending = owned.filter((a) => a.status === 'Pending').length;
+              return (
+                <p className="muted" style={{ marginTop: 10, marginBottom: 0, fontSize: 13 }}>
+                  <strong>{accessOwner}</strong> — {pending} pending · {complete} complete
+                  {owned.length === 0 && ' (no access items assigned yet)'}
+                </p>
+              );
+            })()}
+          {(() => {
+            const proj = projects.find((p) => p.id === previewProject);
+            if (!proj) {
+              return <p className="muted" style={{ marginBottom: 0 }}>Choose a project to preview its standard access list.</p>;
+            }
+            return (
+              <div style={{ marginTop: 10 }}>
+                <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+                  {proj.name} standard accesses ({proj.accessItems.length}):
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {proj.accessItems.map((it) => (
+                    <span key={it.id} className="badge" style={{ background: 'var(--surface-2)' }}>
+                      {it.name}
+                    </span>
+                  ))}
+                  {proj.accessItems.length === 0 && <span className="muted">No access items.</span>}
+                </div>
+                {editable && (
+                  <AddAccessItem
+                    projectId={proj.id}
+                    onAdded={() =>
+                      api
+                        .get<Project[]>('/kt/projects')
+                        .then((r) => setProjects(r.data))
+                        .catch(() => {})
+                    }
+                    onError={(m) => toast.error(m)}
+                    onSuccess={(m) => toast.success(m)}
+                  />
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {editable && (
         <div className="card no-print" style={{ marginBottom: 18 }}>
@@ -211,14 +411,46 @@ export function KTTracker() {
         </div>
       )}
 
-      <div className="grid grid-2">
-        {joinees.map((j) => (
-          <div className="card" key={j.id}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <h3>{j.name}</h3>
+      <div className="card no-print" style={{ marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <label className="muted" style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+            Joiner
+            <select
+              value={selectedJoineeId}
+              onChange={(e) => setSelectedJoineeId(e.target.value)}
+              style={{ minWidth: 220, padding: '8px 10px', border: '1px solid var(--border-strong)', borderRadius: 8 }}
+            >
+              <option value="">Select a joiner…</option>
+              {joinees.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.name}
+                  {j.team ? ` · ${j.team}` : ''} — KT {j.progress.percent}%
+                  {j.accessProgress.total > 0 ? ` · access ${j.accessProgress.granted}/${j.accessProgress.total}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="muted" style={{ fontSize: 13 }}>{joinees.length} joiner{joinees.length === 1 ? '' : 's'} tracked</span>
+        </div>
+      </div>
+
+      <div className="kt-joinees">
+        {joinees.filter((j) => j.id === selectedJoineeId).map((j) => (
+          <div className="card kt-card" key={j.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+              <div>
+                <h3 style={{ margin: 0 }}>{j.name}</h3>
+                <p className="metric-sub" style={{ margin: '2px 0 0' }}>
+                  {j.team ?? '—'} · mentor: {j.mentor ?? '—'}
+                </p>
+              </div>
               <span className="muted mono" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                {j.progress.completed}/{j.progress.total} ({j.progress.percent}%)
                 {j.progress.overdue > 0 && <span className="badge bad">{j.progress.overdue} overdue</span>}
+                {j.accessProgress.total > 0 && (
+                  <span className={`badge ${j.accessProgress.percent === 100 ? 'good' : 'warn'}`}>
+                    access {j.accessProgress.granted}/{j.accessProgress.total}
+                  </span>
+                )}
                 {editable && (
                   <button className="btn danger icon no-print" onClick={() => deleteJoinee(j)}>
                     Delete
@@ -226,13 +458,19 @@ export function KTTracker() {
                 )}
               </span>
             </div>
-            <p className="metric-sub">
-              {j.team ?? '—'} · mentor: {j.mentor ?? '—'}
-            </p>
-            <div className="progress" style={{ marginBottom: 12 }}>
-              <span style={{ width: `${j.progress.percent}%` }} />
-            </div>
-            <ul className="list">
+
+            <div className="kt-split">
+              <section className="kt-col">
+                <div className="kt-col-head">
+                  <h4>Knowledge transfer</h4>
+                  <span className="muted mono" style={{ fontSize: 12 }}>
+                    {j.progress.completed}/{j.progress.total} ({j.progress.percent}%)
+                  </span>
+                </div>
+                <div className="progress" style={{ marginBottom: 10 }}>
+                  <span style={{ width: `${j.progress.percent}%` }} />
+                </div>
+                <ul className="list compact">
               {j.topics.map((t) => {
                 const overdue = t.status === 'Pending' && !!t.targetDate && new Date(t.targetDate) < new Date();
                 return (
@@ -330,10 +568,156 @@ export function KTTracker() {
                 </button>
               </div>
             )}
+              </section>
+
+              <section className="kt-col">
+                <div className="kt-col-head">
+                  <h4>Access list</h4>
+                  <span className="muted mono" style={{ fontSize: 12 }}>
+                    {j.accessProgress.total > 0
+                      ? `${j.accessProgress.granted}/${j.accessProgress.total} complete${
+                          j.accessProgress.pending > 0 ? ` · ${j.accessProgress.pending} pending` : ''
+                        }`
+                      : '—'}
+                  </span>
+                </div>
+                {j.accessProgress.total > 0 && (
+                  <div className="progress" style={{ marginBottom: 10 }}>
+                    <span style={{ width: `${j.accessProgress.percent}%` }} />
+                  </div>
+                )}
+                <ul className="list compact">
+                  {(j.accesses ?? [])
+                    .filter((a) => !pendingOnly || a.status !== 'Granted')
+                    .map((a) => (
+                      <li key={a.id} style={{ display: 'block' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span>
+                            {a.status === 'Granted' ? (
+                              <span className="badge good">DONE</span>
+                            ) : a.status === 'NA' ? (
+                              <span className="badge">N/A</span>
+                            ) : (
+                              <span className="badge warn">PENDING</span>
+                            )}{' '}
+                            {a.accessItem.name}
+                            <span className="muted" style={{ fontSize: 12 }}>
+                              {' '}
+                              · {a.accessItem.project.name}
+                            </span>
+                            {a.status === 'Granted' && a.grantedDate && (
+                              <span className="muted" style={{ fontSize: 12 }}>
+                                {' '}
+                                · {a.grantedDate.slice(0, 10)}
+                              </span>
+                            )}
+                            {a.requestedBy && (
+                              <span className="muted" style={{ fontSize: 12 }}>
+                                {' '}
+                                · {a.requestedBy}
+                              </span>
+                            )}
+                          </span>
+                          {editable && (
+                            <span className="row-actions">
+                              <button
+                                className="btn secondary sm"
+                                onClick={() => setAccessStatus(a, a.status === 'Granted' ? 'Pending' : 'Granted')}
+                              >
+                                Mark {a.status === 'Granted' ? 'Pending' : 'Complete'}
+                              </button>
+                              <button
+                                className="btn secondary sm"
+                                onClick={() => setAccessStatus(a, a.status === 'NA' ? 'Pending' : 'NA')}
+                              >
+                                {a.status === 'NA' ? 'Reset' : 'N/A'}
+                              </button>
+                              <button className="btn danger icon" onClick={() => deleteAccess(a)}>
+                                Remove
+                              </button>
+                            </span>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  {(j.accesses ?? []).length === 0 && <li className="muted">No access items yet.</li>}
+                  {(j.accesses ?? []).length > 0 &&
+                    pendingOnly &&
+                    (j.accesses ?? []).every((a) => a.status === 'Granted') && (
+                      <li className="muted">All access complete.</li>
+                    )}
+                </ul>
+                {editable && projects.length > 0 && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                    <select
+                      style={{ flex: 1, minWidth: 140, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }}
+                      value={accessChoice[j.id] ?? ''}
+                      onChange={(e) => setAccessChoice({ ...accessChoice, [j.id]: e.target.value })}
+                    >
+                      <option value="">Apply access list…</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="btn secondary sm" onClick={() => applyAccessList(j.id)}>
+                      Apply
+                    </button>
+                    {(j.accesses ?? []).some((a) => a.status !== 'Granted') && (
+                      <button className="btn secondary sm" onClick={() => markAllAccessComplete(j)}>
+                        Mark all complete
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
+            </div>
           </div>
         ))}
         {joinees.length === 0 && <p className="muted">No joinees tracked yet.</p>}
+        {joinees.length > 0 && !selectedJoineeId && <p className="muted">Select a joiner above to view their KT topics and access list.</p>}
       </div>
+    </div>
+  );
+}
+
+function AddAccessItem({
+  projectId,
+  onAdded,
+  onError,
+  onSuccess,
+}: {
+  projectId: string;
+  onAdded: () => void;
+  onError: (msg: string) => void;
+  onSuccess: (msg: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const add = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      await api.post(`/kt/projects/${projectId}/access-items`, { name: trimmed });
+      setName('');
+      onSuccess('Access added to list.');
+      onAdded();
+    } catch (err) {
+      onError(apiError(err));
+    }
+  };
+  return (
+    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+      <input
+        style={{ flex: 1, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }}
+        placeholder="Add access to this list…"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && add()}
+      />
+      <button className="btn secondary sm" onClick={add}>
+        Add
+      </button>
     </div>
   );
 }

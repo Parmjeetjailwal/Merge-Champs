@@ -7,6 +7,7 @@ import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Confirm';
 import { DataTable } from '../ui/DataTable';
 import { TrendChart } from '../ui/TrendChart';
+import { exportCsv } from '../lib/exportCsv';
 import type { Employee, TimeRecord, TimeView, TrendPoint } from '../types';
 
 export function TimeUtilization() {
@@ -255,16 +256,40 @@ export function TimeUtilization() {
             <h3>Utilization by employee</h3>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 8, left: -18 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-15} textAnchor="end" height={54} />
-                <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
-                <Tooltip />
-                <Bar dataKey="utilization" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-strong)" />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted)' }} stroke="var(--border-strong)" interval={0} angle={-15} textAnchor="end" height={54} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--muted)' }} stroke="var(--border-strong)" domain={[0, 100]} />
+                <Tooltip
+                  contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border-strong)', borderRadius: 10, color: 'var(--text)' }}
+                  labelStyle={{ color: 'var(--text-soft)' }}
+                  cursor={{ fill: 'var(--primary-soft)' }}
+                />
+                <Bar dataKey="utilization" fill="var(--primary)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="card">
-            <h3>Records</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <h3 style={{ margin: 0 }}>Records</h3>
+              <button
+                className="btn secondary sm"
+                onClick={() =>
+                  exportCsv(
+                    `time-utilization-${period || 'all'}.csv`,
+                    view.records.map((r) => ({
+                      Employee: r.employee.name,
+                      Team: r.employee.team ?? '',
+                      Period: r.period,
+                      Planned: r.plannedHours,
+                      Actual: r.actualHours,
+                      'Utilization %': r.utilizationPercent,
+                    }))
+                  )
+                }
+              >
+                Export CSV
+              </button>
+            </div>
             <DataTable
               rows={view.records}
               rowKey={(r) => r.id}

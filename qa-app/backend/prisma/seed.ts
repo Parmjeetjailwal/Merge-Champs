@@ -23,14 +23,32 @@ async function main() {
   await prisma.maintenanceActivity.deleteMany();
   await prisma.qAScore.deleteMany();
   await prisma.qAReport.deleteMany();
+  await prisma.joineeAccess.deleteMany();
   await prisma.kTTopic.deleteMany();
   await prisma.joinee.deleteMany();
+  await prisma.accessItem.deleteMany();
+  await prisma.project.deleteMany();
   await prisma.kTTemplateTopic.deleteMany();
   await prisma.kTTemplate.deleteMany();
   await prisma.timeUtilizationRecord.deleteMany();
   await prisma.user.deleteMany();
   await prisma.appSetting.deleteMany();
+  await prisma.navSection.deleteMany();
   await prisma.employee.deleteMany();
+
+  // --- Navigation sections (data-driven; KT OPS + Maintenance after Case QA) ---
+  await prisma.navSection.createMany({
+    data: [
+      { key: 'dashboard', label: 'Dashboard', path: '/', icon: 'LayoutDashboard', order: 0 },
+      { key: 'time-utilization', label: 'Time Utilization', path: '/time-utilization', icon: 'Clock', order: 1 },
+      { key: 'call-qa', label: 'Call QA', path: '/call-qa', icon: 'PhoneCall', order: 2 },
+      { key: 'case-qa', label: 'Case QA', path: '/case-qa', icon: 'ClipboardCheck', order: 3 },
+      { key: 'kt', label: 'KT OPS', path: '/kt', icon: 'GraduationCap', order: 4 },
+      { key: 'maintenance', label: 'Maintenance', path: '/maintenance', icon: 'Wrench', order: 5 },
+      { key: 'settings', label: 'Settings', path: '/settings', icon: 'Settings', order: 6, adminOnly: true },
+      { key: 'users', label: 'Users', path: '/users', icon: 'Users', order: 7, adminOnly: true },
+    ],
+  });
 
   // --- Employees ---
   const employees = await Promise.all(
@@ -131,6 +149,30 @@ async function main() {
   });
   void joineeA;
 
+  // --- KT OPS: project access lists (CloudOps, VNA, PACS) ---
+  const accessLists: { key: string; name: string; items: string[] }[] = [
+    {
+      key: 'CLOUDOPS',
+      name: 'CloudOps',
+      items: ['JIRA', 'VPN', 'Qualis', 'Azure', 'mCloud ID', 'GitHub', 'SecureLink', 'Jumpboxes', 'PagerDuty'],
+    },
+    { key: 'VNA', name: 'VNA', items: ['SecureLink', 'Support JIRA', 'Salesforce', 'VPN'] },
+    { key: 'PACS', name: 'PACS', items: ['SecureLink', 'Support JIRA', 'Salesforce', 'VPN'] },
+  ];
+  for (let p = 0; p < accessLists.length; p++) {
+    const { key, name, items } = accessLists[p];
+    // De-duplicate access names per project, preserving order.
+    const unique = [...new Set(items)];
+    await prisma.project.create({
+      data: {
+        key,
+        name,
+        order: p,
+        accessItems: { create: unique.map((itemName, i) => ({ name: itemName, order: i })) },
+      },
+    });
+  }
+
   // --- Maintenance activities (current period) ---
   // [title, employee, scheduledMins, actualMins, dayOffset]
   const maint: [string, typeof ana, number, number, number][] = [
@@ -227,45 +269,80 @@ async function main() {
     { product: 'PACS', caseNo: '12460155', day: 8, period: PREVIOUS, handler: dan, owner: ben, call: mk(7, [1, 5]), case: mk(13, [7, 10]), escalation: true, findings: 'Multiple documentation gaps.', actionPlan: 'Re-training scheduled.' },
   ];
   const srCounter: Record<string, number> = {};
+  const nextSr = (period: string, kind: string) => {
+    const key = `${kind}:${period}`;
+    srCounter[key] = (srCounter[key] ?? 0) + 1;
+    return srCounter[key];
+  };
   for (const ev of qcEvals) {
     const date = new Date(`${ev.period}-${String(ev.day).padStart(2, '0')}T15:00:00`);
-    const criticalFailed =
-      callParams.some((p, i) => p.critical && ev.call[i] === 'NO') ||
-      caseParams.some((p, i) => p.critical && ev.case[i] === 'NO');
-    const result = computeQcResult(ev.call, ev.case, config.callQc.target, config.callQc.pointsPerYes, criticalFailed);
-    srCounter[ev.period] = (srCounter[ev.period] ?? 0) + 1;
+    const ticket = new Date(date.getTime() + 11 * 60000);
+
+    // Call QA evaluation — call-handling params, attributed to the call handler.
+    const callCritical = callParams.some((p, i) => p.critical && ev.call[i] === 'NO');
+    const callResult = computeQcResult(ev.call, [], config.callQc.target, config.callQc.pointsPerYes, callCritical);
     await prisma.callQcEvaluation.create({
       data: {
-        srNo: srCounter[ev.period],
+        kind: 'CALL',
+        srNo: nextSr(ev.period, 'CALL'),
         product: ev.product,
         caseNo: ev.caseNo,
         callDateTime: date,
-        ticketCreatedDateTime: new Date(date.getTime() + 11 * 60000),
+        ticketCreatedDateTime: ticket,
         userName: 'Sample User',
         callHandledById: ev.handler.id,
-        caseOwnerId: ev.owner.id,
+        caseOwnerId: null,
         analystId: faisal.id,
         customerEscalation: ev.escalation,
-        callScore: result.callSection.score,
-        callMax: result.callSection.max,
-        callAdherence: result.callSection.adherence,
-        caseScore: result.caseSection.score,
-        caseMax: result.caseSection.max,
-        caseAdherence: result.caseSection.adherence,
-        overallScore: result.overallScore,
-        overallMax: result.overallMax,
-        overallAdherence: result.overallAdherence,
-        target: result.target,
-        passed: result.passed,
+        callScore: callResult.callSection.score,
+        callMax: callResult.callSection.max,
+        callAdherence: callResult.callSection.adherence,
+        caseScore: callResult.caseSection.score,
+        caseMax: callResult.caseSection.max,
+        caseAdherence: callResult.caseSection.adherence,
+        overallScore: callResult.overallScore,
+        overallMax: callResult.overallMax,
+        overallAdherence: callResult.overallAdherence,
+        target: callResult.target,
+        passed: callResult.passed,
         findings: ev.findings ?? null,
         actionPlan: ev.actionPlan ?? null,
         period: ev.period,
-        answers: {
-          create: [
-            ...callParams.map((p, i) => ({ parameterId: p.id, answer: ev.call[i], comment: null })),
-            ...caseParams.map((p, i) => ({ parameterId: p.id, answer: ev.case[i], comment: null })),
-          ],
-        },
+        answers: { create: callParams.map((p, i) => ({ parameterId: p.id, answer: ev.call[i], comment: null })) },
+      },
+    });
+
+    // Case QA evaluation — case-handling params, attributed to the case owner.
+    const caseCritical = caseParams.some((p, i) => p.critical && ev.case[i] === 'NO');
+    const caseResult = computeQcResult([], ev.case, config.caseQc.target, config.caseQc.pointsPerYes, caseCritical);
+    await prisma.callQcEvaluation.create({
+      data: {
+        kind: 'CASE',
+        srNo: nextSr(ev.period, 'CASE'),
+        product: ev.product,
+        caseNo: ev.caseNo,
+        callDateTime: date,
+        ticketCreatedDateTime: ticket,
+        userName: 'Sample User',
+        callHandledById: null,
+        caseOwnerId: ev.owner.id,
+        analystId: faisal.id,
+        customerEscalation: ev.escalation,
+        callScore: caseResult.callSection.score,
+        callMax: caseResult.callSection.max,
+        callAdherence: caseResult.callSection.adherence,
+        caseScore: caseResult.caseSection.score,
+        caseMax: caseResult.caseSection.max,
+        caseAdherence: caseResult.caseSection.adherence,
+        overallScore: caseResult.overallScore,
+        overallMax: caseResult.overallMax,
+        overallAdherence: caseResult.overallAdherence,
+        target: caseResult.target,
+        passed: caseResult.passed,
+        findings: ev.findings ?? null,
+        actionPlan: ev.actionPlan ?? null,
+        period: ev.period,
+        answers: { create: caseParams.map((p, i) => ({ parameterId: p.id, answer: ev.case[i], comment: null })) },
       },
     });
   }

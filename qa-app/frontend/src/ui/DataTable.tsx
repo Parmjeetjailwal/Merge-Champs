@@ -22,6 +22,10 @@ interface DataTableProps<T> {
   rowClassName?: (row: T) => string;
   /** Called with the current filtered + sorted rows whenever they change (e.g. for export). */
   onFilteredRowsChange?: (rows: T[]) => void;
+  /** Enable row checkboxes + a bulk-action bar. */
+  selectable?: boolean;
+  /** Rendered in the bulk bar when rows are selected. */
+  bulkActions?: (selected: T[], clear: () => void) => ReactNode;
 }
 
 export function DataTable<T>({
@@ -34,11 +38,15 @@ export function DataTable<T>({
   actions,
   rowClassName,
   onFilteredRowsChange,
+  selectable = false,
+  bulkActions,
 }: DataTableProps<T>) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(0);
+  const [dense, setDense] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -87,6 +95,32 @@ export function DataTable<T>({
     }
   };
 
+  // --- selection ---
+  const selectedRows = useMemo(() => sorted.filter((r) => selected.has(rowKey(r))), [sorted, selected, rowKey]);
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const keys = new Set(sorted.map((r) => rowKey(r)));
+      const next = new Set<string>();
+      let changed = false;
+      prev.forEach((k) => (keys.has(k) ? next.add(k) : (changed = true)));
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sorted]);
+  const allSelected = sorted.length > 0 && sorted.every((r) => selected.has(rowKey(r)));
+  const toggleRow = (r: T) =>
+    setSelected((prev) => {
+      const n = new Set(prev);
+      const k = rowKey(r);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
+  const toggleAll = () => setSelected(() => (allSelected ? new Set<string>() : new Set(sorted.map((r) => rowKey(r)))));
+  const clearSelection = () => setSelected(new Set());
+  const colCount = columns.length + (actions ? 1 : 0) + (selectable ? 1 : 0);
+
   return (
     <div>
       <div className="table-toolbar no-print">
@@ -102,48 +136,86 @@ export function DataTable<T>({
         <span className="muted" style={{ fontSize: 13 }}>
           {sorted.length} result{sorted.length === 1 ? '' : 's'}
         </span>
+        <button
+          className="btn secondary sm"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setDense((d) => !d)}
+          title="Toggle row density"
+        >
+          {dense ? 'Comfortable' : 'Compact'}
+        </button>
       </div>
-      <table>
-        <thead>
-          <tr>
-            {columns.map((c) => {
-              const active = sortKey === c.key;
-              const canSort = c.value && c.sortable !== false;
-              return (
-                <th
-                  key={c.key}
-                  className={c.align === 'right' ? 'right' : ''}
-                  style={canSort ? { cursor: 'pointer', userSelect: 'none' } : undefined}
-                  onClick={() => toggleSort(c)}
-                >
-                  {c.header}
-                  {active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                </th>
-              );
-            })}
-            {actions && <th className="right">Actions</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {pageRows.map((r) => (
-            <tr key={rowKey(r)} className={rowClassName?.(r) ?? ''}>
-              {columns.map((c) => (
-                <td key={c.key} className={c.align === 'right' ? 'right mono' : ''}>
-                  {c.render ? c.render(r) : c.value ? c.value(r) : null}
-                </td>
-              ))}
-              {actions && <td className="right no-print">{actions(r)}</td>}
-            </tr>
-          ))}
-          {pageRows.length === 0 && (
+
+      {selectable && selectedRows.length > 0 && (
+        <div className="bulk-bar no-print">
+          <span>
+            <b>{selectedRows.length}</b> selected
+          </span>
+          <span className="bulk-actions">{bulkActions?.(selectedRows, clearSelection)}</span>
+          <button className="btn secondary sm" onClick={clearSelection}>
+            Clear
+          </button>
+        </div>
+      )}
+
+      <div className="table-scroll">
+        <table className={dense ? 'dense' : ''}>
+          <thead>
             <tr>
-              <td colSpan={columns.length + (actions ? 1 : 0)} className="muted">
-                {emptyText}
-              </td>
+              {selectable && (
+                <th className="select-col">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all" />
+                </th>
+              )}
+              {columns.map((c) => {
+                const active = sortKey === c.key;
+                const canSort = c.value && c.sortable !== false;
+                return (
+                  <th
+                    key={c.key}
+                    className={c.align === 'right' ? 'right' : ''}
+                    style={canSort ? { cursor: 'pointer', userSelect: 'none' } : undefined}
+                    onClick={() => toggleSort(c)}
+                  >
+                    {c.header}
+                    {active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                  </th>
+                );
+              })}
+              {actions && <th className="right">Actions</th>}
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {pageRows.map((r) => (
+              <tr key={rowKey(r)} className={rowClassName?.(r) ?? ''}>
+                {selectable && (
+                  <td className="select-col no-print">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(rowKey(r))}
+                      onChange={() => toggleRow(r)}
+                      aria-label="Select row"
+                    />
+                  </td>
+                )}
+                {columns.map((c) => (
+                  <td key={c.key} className={c.align === 'right' ? 'right mono' : ''}>
+                    {c.render ? c.render(r) : c.value ? c.value(r) : null}
+                  </td>
+                ))}
+                {actions && <td className="right no-print">{actions(r)}</td>}
+              </tr>
+            ))}
+            {pageRows.length === 0 && (
+              <tr>
+                <td colSpan={colCount} className="muted">
+                  {emptyText}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
       {totalPages > 1 && (
         <div className="pagination no-print">
           <button className="btn secondary sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>

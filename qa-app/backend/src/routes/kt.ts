@@ -24,6 +24,7 @@ function withProgress(joinee: {
     notes: string | null;
     signedOffBy: string | null;
   }[];
+  accesses?: { status: string }[];
 }) {
   const total = joinee.topics.length;
   const completed = joinee.topics.filter((t) => t.status === 'Completed').length;
@@ -31,9 +32,18 @@ function withProgress(joinee: {
   const overdue = joinee.topics.filter(
     (t) => t.status === 'Pending' && t.targetDate && new Date(t.targetDate) < now
   ).length;
+  const accesses = joinee.accesses ?? [];
+  const accessGranted = accesses.filter((a) => a.status === 'Granted').length;
+  const accessPending = accesses.filter((a) => a.status === 'Pending').length;
   return {
     ...joinee,
     progress: { completed, total, percent: total ? Math.round((completed / total) * 100) : 0, overdue },
+    accessProgress: {
+      granted: accessGranted,
+      pending: accessPending,
+      total: accesses.length,
+      percent: accesses.length ? Math.round((accessGranted / accesses.length) * 100) : 0,
+    },
   };
 }
 
@@ -42,7 +52,13 @@ ktRouter.get(
   '/joinees',
   asyncHandler(async (_req, res) => {
     const joinees = await prisma.joinee.findMany({
-      include: { topics: { orderBy: { topicName: 'asc' } } },
+      include: {
+        topics: { orderBy: { topicName: 'asc' } },
+        accesses: {
+          include: { accessItem: { include: { project: true } } },
+          orderBy: [{ accessItem: { project: { order: 'asc' } } }, { accessItem: { order: 'asc' } }],
+        },
+      },
       orderBy: { joinDate: 'desc' },
     });
     res.json(joinees.map(withProgress));
@@ -254,5 +270,163 @@ ktRouter.post(
       include: { topics: { orderBy: { topicName: 'asc' } } },
     });
     res.status(201).json(updated ? withProgress(updated) : null);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// KT OPS — Project access lists
+// ---------------------------------------------------------------------------
+
+function accessProgress(rows: { status: string }[]) {
+  const total = rows.length;
+  const granted = rows.filter((r) => r.status === 'Granted').length;
+  const pending = rows.filter((r) => r.status === 'Pending').length;
+  return { granted, pending, total, percent: total ? Math.round((granted / total) * 100) : 0 };
+}
+
+// GET /api/kt/projects — active projects with their access items
+ktRouter.get(
+  '/projects',
+  asyncHandler(async (_req, res) => {
+    const projects = await prisma.project.findMany({
+      where: { active: true },
+      include: { accessItems: { where: { active: true }, orderBy: { order: 'asc' } } },
+      orderBy: { order: 'asc' },
+    });
+    res.json(projects);
+  })
+);
+
+// POST /api/kt/projects/:projectId/access-items  { name }
+ktRouter.post(
+  '/projects/:projectId/access-items',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: 'name is required.' });
+    const project = await prisma.project.findUnique({ where: { id: req.params.projectId } });
+    if (!project) return res.status(404).json({ error: 'Project not found.' });
+    const existing = await prisma.accessItem.findUnique({
+      where: { projectId_name: { projectId: project.id, name } },
+    });
+    if (existing) return res.status(409).json({ error: 'An access with that name already exists for this project.' });
+    const count = await prisma.accessItem.count({ where: { projectId: project.id } });
+    const item = await prisma.accessItem.create({
+      data: { projectId: project.id, name, order: count },
+    });
+    res.status(201).json(item);
+  })
+);
+
+// PATCH /api/kt/access-items/:id  { name?, active? }
+ktRouter.patch(
+  '/access-items/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const { name, active } = req.body ?? {};
+    const data: { name?: string; active?: boolean } = {};
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed) return res.status(400).json({ error: 'name cannot be empty.' });
+      data.name = trimmed;
+    }
+    if (active !== undefined) data.active = Boolean(active);
+    const item = await prisma.accessItem.update({ where: { id: req.params.id }, data });
+    res.json(item);
+  })
+);
+
+// DELETE /api/kt/access-items/:id
+ktRouter.delete(
+  '/access-items/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    await prisma.accessItem.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  })
+);
+
+// GET /api/kt/joinees/:id/access — provisioning rows for a joinee
+ktRouter.get(
+  '/joinees/:id/access',
+  asyncHandler(async (req, res) => {
+    const rows = await prisma.joineeAccess.findMany({
+      where: { joineeId: req.params.id },
+      include: { accessItem: { include: { project: true } } },
+      orderBy: [{ accessItem: { project: { order: 'asc' } } }, { accessItem: { order: 'asc' } }],
+    });
+    res.json({ accesses: rows, progress: accessProgress(rows) });
+  })
+);
+
+// POST /api/kt/joinees/:id/access/apply  { projectId } — bulk-create pending rows
+ktRouter.post(
+  '/joinees/:id/access/apply',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const projectId = typeof req.body?.projectId === 'string' ? req.body.projectId : '';
+    if (!projectId) return res.status(400).json({ error: 'projectId is required.' });
+    const joinee = await prisma.joinee.findUnique({ where: { id: req.params.id } });
+    if (!joinee) return res.status(404).json({ error: 'Joinee not found.' });
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      include: { accessItems: { where: { active: true }, orderBy: { order: 'asc' } } },
+    });
+    if (!project) return res.status(404).json({ error: 'Project not found.' });
+    const existing = await prisma.joineeAccess.findMany({
+      where: { joineeId: joinee.id, accessItem: { projectId: project.id } },
+      select: { accessItemId: true },
+    });
+    const already = new Set(existing.map((r) => r.accessItemId));
+    const toCreate = project.accessItems.filter((it) => !already.has(it.id));
+    if (toCreate.length > 0) {
+      await prisma.joineeAccess.createMany({
+        data: toCreate.map((it) => ({ joineeId: joinee.id, accessItemId: it.id, status: 'Pending' })),
+      });
+    }
+    const rows = await prisma.joineeAccess.findMany({
+      where: { joineeId: joinee.id },
+      include: { accessItem: { include: { project: true } } },
+      orderBy: [{ accessItem: { project: { order: 'asc' } } }, { accessItem: { order: 'asc' } }],
+    });
+    res.status(201).json({ added: toCreate.length, accesses: rows, progress: accessProgress(rows) });
+  })
+);
+
+// PATCH /api/kt/joinee-access/:id  { status?, grantedDate?, notes?, requestedBy? }
+ktRouter.patch(
+  '/joinee-access/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    const { status, grantedDate, notes, requestedBy } = req.body ?? {};
+    const data: { status?: string; grantedDate?: Date | null; notes?: string | null; requestedBy?: string | null } = {};
+    if (status !== undefined) {
+      if (!['Pending', 'Granted', 'NA'].includes(status)) {
+        return res.status(400).json({ error: "status must be 'Pending', 'Granted' or 'NA'." });
+      }
+      data.status = status;
+      // Default the granted date to now when marking Granted without an explicit date.
+      if (status === 'Granted' && grantedDate === undefined) data.grantedDate = new Date();
+      if (status !== 'Granted') data.grantedDate = null;
+    }
+    if (grantedDate !== undefined) data.grantedDate = grantedDate ? new Date(grantedDate) : null;
+    if (notes !== undefined) data.notes = notes || null;
+    if (requestedBy !== undefined) data.requestedBy = requestedBy ? String(requestedBy).trim() : null;
+    const row = await prisma.joineeAccess.update({
+      where: { id: req.params.id },
+      data,
+      include: { accessItem: { include: { project: true } } },
+    });
+    res.json(row);
+  })
+);
+
+// DELETE /api/kt/joinee-access/:id
+ktRouter.delete(
+  '/joinee-access/:id',
+  requireRole('Admin', 'QA Lead'),
+  asyncHandler(async (req, res) => {
+    await prisma.joineeAccess.delete({ where: { id: req.params.id } });
+    res.status(204).end();
   })
 );

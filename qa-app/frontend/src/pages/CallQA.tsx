@@ -5,6 +5,7 @@ import { can } from '../perms';
 import { useToast } from '../ui/Toast';
 import { useConfirm } from '../ui/Confirm';
 import { DataTable } from '../ui/DataTable';
+import { QcParamManager } from '../ui/QcParamManager';
 import type { CallEvaluation, CallQaView, Employee, QcAnswer, QcParameter, QcParameters } from '../types';
 
 const ANSWERS: QcAnswer[] = ['YES', 'NO', 'NA'];
@@ -24,8 +25,7 @@ const emptyHeader = () => ({
   callDateTime: nowLocal(),
   ticketCreatedDateTime: '',
   userName: '',
-  callHandledById: '',
-  caseOwnerId: '',
+  personId: '',
   analystId: '',
   customerEscalation: false,
   findings: '',
@@ -56,7 +56,47 @@ function ragClass(v: number | null | undefined, target: number): string {
 
 const answerBadgeClass = (a: QcAnswer) => (a === 'YES' ? 'good' : a === 'NO' ? 'bad' : 'na');
 
-export function CallQA() {
+/** Configures the scorecard for a single QC section (call handling or case handling). */
+export interface ScorecardConfig {
+  section: 'CALL' | 'CASE';
+  endpoint: string; // '/call-qa' | '/case-qa'
+  title: string;
+  subtitle: string;
+  personField: 'callHandledById' | 'caseOwnerId';
+  personLabel: string; // e.g. 'Call handled by'
+  sectionLabel: string; // 'Call' | 'Case'
+  sectionTitle: string; // 'Call Handling Parameters'
+  templatePath: string;
+  exportSlug: string;
+}
+
+export const callConfig: ScorecardConfig = {
+  section: 'CALL',
+  endpoint: '/call-qa',
+  title: 'Call QA',
+  subtitle: 'Score each call against the call-handling QC parameters (Yes / No / NA). Pass target is {target}% adherence. Critical parameters auto-fail the QC.',
+  personField: 'callHandledById',
+  personLabel: 'Call handled by',
+  sectionLabel: 'Call',
+  sectionTitle: 'Call Handling Parameters',
+  templatePath: '/api/templates/call-qa',
+  exportSlug: 'call-qc',
+};
+
+export const caseConfig: ScorecardConfig = {
+  section: 'CASE',
+  endpoint: '/case-qa',
+  title: 'Case QA',
+  subtitle: 'Score each case against the case-handling QC parameters (Yes / No / NA). Pass target is {target}% adherence. Critical parameters auto-fail the QC.',
+  personField: 'caseOwnerId',
+  personLabel: 'Case owner',
+  sectionLabel: 'Case',
+  sectionTitle: 'Case Handling Parameters',
+  templatePath: '/api/templates/case-qa',
+  exportSlug: 'case-qc',
+};
+
+export function QcScorecard({ config }: { config: ScorecardConfig }) {
   const { role } = useRole();
   const editable = can.callQa(role);
   const toast = useToast();
@@ -83,15 +123,23 @@ export function CallQA() {
   const [answers, setAnswers] = useState<AnswerState>({});
   const [saving, setSaving] = useState(false);
   const [viewing, setViewing] = useState<CallEvaluation | null>(null);
+  const [paramMgrOpen, setParamMgrOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const allParams = useMemo(() => (params ? [...params.call, ...params.case] : []), [params]);
+  const reloadParams = () => api.get<QcParameters>(`${config.endpoint}/parameters`).then((r) => setParams(r.data)).catch(() => {});
+
+  const allParams = useMemo(() => (params ? (config.section === 'CALL' ? params.call : params.case) : []), [params, config.section]);
   const target = view?.target ?? 95;
+
+  // Section-aware accessors for the single owner this scorecard tracks.
+  const personName = (e: CallEvaluation) => (config.section === 'CALL' ? e.callHandledBy?.name : e.caseOwner?.name) ?? '—';
+  const personId = (e: CallEvaluation) => (config.section === 'CALL' ? e.callHandledById : e.caseOwnerId);
+  const personAdherence = (e: CallEvaluation) => (config.section === 'CALL' ? e.callAdherence : e.caseAdherence);
 
   const load = (p?: string) => {
     setError('');
     api
-      .get<CallQaView>('/call-qa', { params: p ? { period: p } : {} })
+      .get<CallQaView>(config.endpoint, { params: p ? { period: p } : {} })
       .then((r) => {
         setView(r.data);
         if (r.data.period) setPeriod(r.data.period);
@@ -101,23 +149,19 @@ export function CallQA() {
 
   useEffect(() => {
     api.get<Employee[]>('/employees').then((r) => setEmployees(r.data));
-    api.get<QcParameters>('/call-qa/parameters').then((r) => setParams(r.data));
-    api.get<string[]>('/call-qa/periods').then((r) => setPeriods(r.data));
+    api.get<QcParameters>(`${config.endpoint}/parameters`).then((r) => setParams(r.data));
+    api.get<string[]>(`${config.endpoint}/periods`).then((r) => setPeriods(r.data));
     load();
   }, []);
 
   // --- live preview of the score panel ---
   const preview = useMemo(() => {
     if (!params) {
-      return { call: sectionStats([], {}), case: sectionStats([], {}), overall: null as number | null, answered: 0, total: 0 };
+      return { sec: sectionStats([], {}), overall: null as number | null, answered: 0, total: 0 };
     }
-    const call = sectionStats(params.call, answers);
-    const kase = sectionStats(params.case, answers);
-    const yes = call.yes + kase.yes;
-    const applicable = call.applicable + kase.applicable;
-    const overall = applicable === 0 ? null : Math.round((yes / applicable) * 1000) / 10;
+    const sec = sectionStats(allParams, answers);
     const answered = allParams.filter((p) => answers[p.id]?.answer).length;
-    return { call, case: kase, overall, answered, total: allParams.length };
+    return { sec, overall: sec.adherence, answered, total: allParams.length };
   }, [params, answers, allParams]);
 
   const criticalFail = allParams.some((p) => p.critical && answers[p.id]?.answer === 'NO');
@@ -131,8 +175,8 @@ export function CallQA() {
   const memberOptions = useMemo(() => {
     const map = new Map<string, string>();
     for (const e of view?.evaluations ?? []) {
-      map.set(e.callHandledById, e.callHandledBy.name);
-      map.set(e.caseOwnerId, e.caseOwner.name);
+      const id = personId(e);
+      if (id) map.set(id, personName(e));
     }
     return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [view]);
@@ -140,7 +184,7 @@ export function CallQA() {
   const tableRows = useMemo(() => {
     return (view?.evaluations ?? []).filter((e) => {
       if (filterProduct && (e.product || '—') !== filterProduct) return false;
-      if (filterMember && e.callHandledById !== filterMember && e.caseOwnerId !== filterMember) return false;
+      if (filterMember && personId(e) !== filterMember) return false;
       if (filterResult === 'pass' && !e.passed) return false;
       if (filterResult === 'fail' && e.passed) return false;
       if (filterResult === 'critical' && !e.criticalFailed) return false;
@@ -179,8 +223,7 @@ export function CallQA() {
       passCount,
       failCount: total - passCount,
       criticalCount,
-      callAvg: avg(evals.map((e) => e.callAdherence)),
-      caseAvg: avg(evals.map((e) => e.caseAdherence)),
+      sectionAvg: avg(evals.map((e) => (config.section === 'CALL' ? e.callAdherence : e.caseAdherence))),
       perProduct,
       weakest,
     };
@@ -213,8 +256,7 @@ export function CallQA() {
       callDateTime: ev.callDateTime ? ev.callDateTime.slice(0, 16) : nowLocal(),
       ticketCreatedDateTime: ev.ticketCreatedDateTime ? ev.ticketCreatedDateTime.slice(0, 16) : '',
       userName: ev.userName ?? '',
-      callHandledById: ev.callHandledById,
-      caseOwnerId: ev.caseOwnerId,
+      personId: (config.section === 'CALL' ? ev.callHandledById : ev.caseOwnerId) ?? '',
       analystId: ev.analystId ?? '',
       customerEscalation: ev.customerEscalation,
       findings: ev.findings ?? '',
@@ -233,8 +275,7 @@ export function CallQA() {
       callDateTime: nowLocal(),
       ticketCreatedDateTime: '',
       userName: ev.userName ?? '',
-      callHandledById: ev.callHandledById,
-      caseOwnerId: ev.caseOwnerId,
+      personId: (config.section === 'CALL' ? ev.callHandledById : ev.caseOwnerId) ?? '',
       analystId: ev.analystId ?? '',
       customerEscalation: ev.customerEscalation,
       findings: '',
@@ -264,16 +305,18 @@ export function CallQA() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!header.caseNo || !header.callHandledById || !header.caseOwnerId) {
-      toast.error('Case number, call handler, and case owner are required.');
+    if (!header.caseNo || !header.personId) {
+      toast.error(`Case number and ${config.personLabel.toLowerCase()} are required.`);
       return;
     }
     if (preview.answered < preview.total) {
       toast.error(`Answer all parameters (${preview.answered}/${preview.total}).`);
       return;
     }
+    const { personId: pid, ...rest } = header;
     const payload = {
-      ...header,
+      ...rest,
+      [config.personField]: pid,
       ticketCreatedDateTime: header.ticketCreatedDateTime || null,
       analystId: header.analystId || null,
       answers: allParams.map((p) => ({
@@ -285,14 +328,14 @@ export function CallQA() {
     setSaving(true);
     try {
       if (editingId) {
-        await api.patch(`/call-qa/${editingId}`, payload);
+        await api.patch(`${config.endpoint}/${editingId}`, payload);
         toast.success('QC updated.');
       } else {
-        await api.post('/call-qa', payload);
+        await api.post(config.endpoint, payload);
         toast.success('QC saved.');
       }
       closeModal();
-      const p = await api.get<string[]>('/call-qa/periods');
+      const p = await api.get<string[]>(`${config.endpoint}/periods`);
       setPeriods(p.data);
       load(header.callDateTime.slice(0, 7));
     } catch (err) {
@@ -311,7 +354,7 @@ export function CallQA() {
     });
     if (!ok) return;
     try {
-      await api.delete(`/call-qa/${ev.id}`);
+      await api.delete(`${config.endpoint}/${ev.id}`);
       toast.success('QC deleted.');
       load(period);
     } catch (err) {
@@ -319,23 +362,41 @@ export function CallQA() {
     }
   };
 
-  // Export the currently filtered rows of the QC evaluations table to Excel.
-  const exportFiltered = async () => {
-    if (!view?.period) return;
-    const ids = filteredEvals.map((ev) => ev.id);
+  // Export selected/filtered rows of the QC evaluations table to Excel.
+  const exportIds = async (ids: string[]) => {
+    if (!view?.period || ids.length === 0) return;
     try {
-      const res = await api.get('/call-qa/export', {
+      const res = await api.get(`${config.endpoint}/export`, {
         params: { period: view.period, ids: ids.join(',') },
         responseType: 'blob',
       });
       const url = URL.createObjectURL(res.data as Blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `call-case-qc-${view.period}.xlsx`;
+      a.download = `${config.exportSlug}-${view.period}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(apiError(err));
+    }
+  };
+  const exportFiltered = () => exportIds(filteredEvals.map((ev) => ev.id));
+
+  const bulkDelete = async (evals: CallEvaluation[], clear: () => void) => {
+    const ok = await confirm({
+      title: 'Delete evaluations',
+      message: `Delete ${evals.length} QC evaluation(s)? This cannot be undone.`,
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await Promise.all(evals.map((ev) => api.delete(`${config.endpoint}/${ev.id}`)));
+      toast.success(`Deleted ${evals.length} evaluation(s).`);
+      clear();
+      load(period);
     } catch (err) {
       toast.error(apiError(err));
     }
@@ -351,11 +412,11 @@ export function CallQA() {
     const fd = new FormData();
     fd.append('file', file);
     try {
-      const r = await api.post('/call-qa/upload', fd);
+      const r = await api.post(`${config.endpoint}/upload`, fd);
       const { inserted, errors, totalRows } = r.data;
       toast.success(`Imported ${inserted}/${totalRows} QC(s)${errors.length ? `, ${errors.length} error(s)` : ''}.`);
       if (fileRef.current) fileRef.current.value = '';
-      const p = await api.get<string[]>('/call-qa/periods');
+      const p = await api.get<string[]>(`${config.endpoint}/periods`);
       setPeriods(p.data);
       load();
     } catch (err) {
@@ -375,16 +436,18 @@ export function CallQA() {
     <div>
       <div className="page-head-row">
         <div>
-          <h2 className="page-title">Call &amp; Case QC</h2>
-          <p className="page-sub">
-            Score each call and case against the QC parameters (Yes / No / NA). Pass target is {target}% overall adherence.
-            Critical parameters auto-fail the QC.
-          </p>
+          <h2 className="page-title">{config.title}</h2>
+          <p className="page-sub">{config.subtitle.replace('{target}', String(target))}</p>
         </div>
         {editable && (
-          <button className="btn" onClick={openNew} disabled={!params}>
-            + New QC
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn secondary" onClick={() => setParamMgrOpen(true)} disabled={!params}>
+              Manage parameters
+            </button>
+            <button className="btn" onClick={openNew} disabled={!params}>
+              + New QC
+            </button>
+          </div>
         )}
       </div>
 
@@ -437,12 +500,8 @@ export function CallQA() {
               <b className="mono rag-bad">{insights.criticalCount}</b>
             </div>
             <div className="stat">
-              <span className="stat-label">Avg call %</span>
-              <b className={`mono ${ragClass(insights.callAvg, target)}`}>{pct(insights.callAvg)}</b>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Avg case %</span>
-              <b className={`mono ${ragClass(insights.caseAvg, target)}`}>{pct(insights.caseAvg)}</b>
+              <span className="stat-label">Avg adherence</span>
+              <b className={`mono ${ragClass(insights.sectionAvg, target)}`}>{pct(insights.sectionAvg)}</b>
             </div>
           </div>
 
@@ -502,11 +561,11 @@ export function CallQA() {
             <button className="btn" type="submit">
               Upload
             </button>
-            <a className="btn secondary" href="/api/templates/call-qa">
+            <a className="btn secondary" href={config.templatePath}>
               Download template
             </a>
             <span className="muted" style={{ fontSize: 13 }}>
-              Columns: Product, Case No, Call Date, Call Handled By, Case Owner, then QC1…QC20 (Yes/No/NA).
+              Columns: Product, Case No, Call Date, {config.personLabel}, then the QC parameter codes (Yes/No/NA).
             </span>
           </form>
         </div>
@@ -565,19 +624,29 @@ export function CallQA() {
           rowKey={(e) => e.id}
           emptyText="No QC evaluations match the current filters."
           onFilteredRowsChange={setFilteredEvals}
+          selectable
+          bulkActions={(sel, clear) => (
+            <>
+              <button className="btn secondary sm" onClick={() => exportIds(sel.map((e) => e.id))}>
+                Export {sel.length}
+              </button>
+              {editable && (
+                <button className="btn danger sm" onClick={() => bulkDelete(sel, clear)}>
+                  Delete {sel.length}
+                </button>
+              )}
+            </>
+          )}
           columns={[
             { key: 'case', header: 'Case', value: (e) => e.caseNo },
             { key: 'product', header: 'Product', value: (e) => e.product ?? '—' },
-            { key: 'handler', header: 'Call handled by', value: (e) => e.callHandledBy.name },
-            { key: 'owner', header: 'Case owner', value: (e) => e.caseOwner.name },
-            { key: 'call', header: 'Call %', align: 'right', value: (e) => e.callAdherence ?? -1, render: (e) => <span className={ragClass(e.callAdherence, target)}>{pct(e.callAdherence)}</span> },
-            { key: 'cas', header: 'Case %', align: 'right', value: (e) => e.caseAdherence ?? -1, render: (e) => <span className={ragClass(e.caseAdherence, target)}>{pct(e.caseAdherence)}</span> },
+            { key: 'person', header: config.personLabel, value: (e) => personName(e) },
             {
-              key: 'overall',
-              header: 'Overall %',
+              key: 'adherence',
+              header: 'Adherence %',
               align: 'right',
-              value: (e) => e.overallAdherence ?? -1,
-              render: (e) => <b className={ragClass(e.overallAdherence, target)}>{pct(e.overallAdherence)}</b>,
+              value: (e) => personAdherence(e) ?? -1,
+              render: (e) => <b className={ragClass(personAdherence(e), target)}>{pct(personAdherence(e))}</b>,
             },
             {
               key: 'result',
@@ -661,8 +730,8 @@ export function CallQA() {
               </div>
               <div className="row">
                 <label className="field">
-                  Call handled by * <span className="muted">(call handling)</span>
-                  <select value={header.callHandledById} onChange={(e) => setHeader({ ...header, callHandledById: e.target.value })}>
+                  {config.personLabel} *
+                  <select value={header.personId} onChange={(e) => setHeader({ ...header, personId: e.target.value })}>
                     <option value="">Select…</option>
                     {employees.map((emp) => (
                       <option key={emp.id} value={emp.id}>
@@ -672,8 +741,8 @@ export function CallQA() {
                   </select>
                 </label>
                 <label className="field">
-                  Case owner * <span className="muted">(case handling)</span>
-                  <select value={header.caseOwnerId} onChange={(e) => setHeader({ ...header, caseOwnerId: e.target.value })}>
+                  Analyst
+                  <select value={header.analystId} onChange={(e) => setHeader({ ...header, analystId: e.target.value })}>
                     <option value="">Select…</option>
                     {employees.map((emp) => (
                       <option key={emp.id} value={emp.id}>
@@ -701,22 +770,11 @@ export function CallQA() {
               {/* Live score panel */}
               <div className="score-panel">
                 <div className="stat">
-                  <span className="stat-label">Call handling</span>
-                  <b className={`mono ${ragClass(preview.call.adherence, target)}`}>{pct(preview.call.adherence)}</b>
+                  <span className="stat-label">{config.sectionLabel} adherence</span>
+                  <b className={`mono ${ragClass(preview.sec.adherence, target)}`}>{pct(preview.sec.adherence)}</b>
                   <span className="muted" style={{ fontSize: 11 }}>
-                    {preview.call.yes}/{preview.call.applicable} Yes
+                    {preview.sec.yes}/{preview.sec.applicable} Yes
                   </span>
-                </div>
-                <div className="stat">
-                  <span className="stat-label">Case handling</span>
-                  <b className={`mono ${ragClass(preview.case.adherence, target)}`}>{pct(preview.case.adherence)}</b>
-                  <span className="muted" style={{ fontSize: 11 }}>
-                    {preview.case.yes}/{preview.case.applicable} Yes
-                  </span>
-                </div>
-                <div className="stat">
-                  <span className="stat-label">Overall</span>
-                  <b className={`mono ${ragClass(preview.overall, target)}`}>{pct(preview.overall)}</b>
                 </div>
                 <div className="stat">
                   <span className="stat-label">Result</span>
@@ -735,10 +793,7 @@ export function CallQA() {
                 </div>
               )}
 
-              {[
-                { title: 'Call Handling Parameters', list: params.call },
-                { title: 'Case Handling Parameters', list: params.case },
-              ].map((sec) => (
+              {[{ title: config.sectionTitle, list: allParams }].map((sec) => (
                 <div key={sec.title} className="qc-section">
                   <div className="qc-section-head">
                     <h4>{sec.title}</h4>
@@ -757,7 +812,7 @@ export function CallQA() {
                   {sec.list.map((p) => (
                     <div key={p.id} className="qc-row">
                       <div className="qc-text">
-                        <span className="muted mono">{p.code}</span> {p.text}
+                        <span className="muted mono">#{p.serial ?? p.order}</span> {p.text}
                         {p.critical && <span className="badge bad" style={{ marginLeft: 6 }}>CRITICAL</span>}
                       </div>
                       <div className="seg" role="group" aria-label={p.text}>
@@ -824,8 +879,7 @@ export function CallQA() {
 
             <div className="detail-grid">
               <div><span className="stat-label">Product</span> {viewing.product ?? '—'}</div>
-              <div><span className="stat-label">Call handled by</span> {viewing.callHandledBy.name}</div>
-              <div><span className="stat-label">Case owner</span> {viewing.caseOwner.name}</div>
+              <div><span className="stat-label">{config.personLabel}</span> {personName(viewing)}</div>
               <div><span className="stat-label">Analyst</span> {viewing.analyst?.name ?? '—'}</div>
               <div><span className="stat-label">User</span> {viewing.userName ?? '—'}</div>
               <div><span className="stat-label">Escalation</span> {viewing.customerEscalation ? 'Yes' : 'No'}</div>
@@ -835,14 +889,11 @@ export function CallQA() {
 
             <div className="score-panel">
               <div className="stat">
-                <span className="stat-label">Call handling</span>
-                <b className={`mono ${ragClass(viewing.callAdherence, target)}`}>{pct(viewing.callAdherence)}</b>
-                <span className="muted" style={{ fontSize: 11 }}>{viewing.callScore}/{viewing.callMax} pts</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">Case handling</span>
-                <b className={`mono ${ragClass(viewing.caseAdherence, target)}`}>{pct(viewing.caseAdherence)}</b>
-                <span className="muted" style={{ fontSize: 11 }}>{viewing.caseScore}/{viewing.caseMax} pts</span>
+                <span className="stat-label">{config.sectionLabel} adherence</span>
+                <b className={`mono ${ragClass(personAdherence(viewing), target)}`}>{pct(personAdherence(viewing))}</b>
+                <span className="muted" style={{ fontSize: 11 }}>
+                  {config.section === 'CALL' ? `${viewing.callScore}/${viewing.callMax}` : `${viewing.caseScore}/${viewing.caseMax}`} pts
+                </span>
               </div>
               <div className="stat">
                 <span className="stat-label">Overall</span>
@@ -855,7 +906,7 @@ export function CallQA() {
               </div>
             </div>
 
-            {(['CALL', 'CASE'] as const).map((sectionKey) => {
+            {[config.section].map((sectionKey) => {
               const list = viewing.answers.filter((a) => a.section === sectionKey);
               if (list.length === 0) return null;
               return (
@@ -910,6 +961,21 @@ export function CallQA() {
           </div>
         </div>
       )}
+
+      {paramMgrOpen && (
+        <QcParamManager
+          section={config.section}
+          endpoint={config.endpoint}
+          title={config.sectionTitle}
+          onClose={() => setParamMgrOpen(false)}
+          onChanged={reloadParams}
+        />
+      )}
     </div>
   );
+}
+
+/** Call QA = the call-handling QC scorecard. */
+export function CallQA() {
+  return <QcScorecard config={callConfig} />;
 }

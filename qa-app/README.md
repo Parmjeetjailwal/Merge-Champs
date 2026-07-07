@@ -4,13 +4,19 @@ A web app with a landing-page dashboard that surfaces team quality & productivit
 across **five modules**:
 
 1. **Time Utilization** — imported from Excel; highlights **top 2 / bottom 2** by utilization.
-2. **Jira Ticket QA Scoring** — score = timely response + documentation; generates a report
-   and exports it to a downstream **PMI** application (JSON/CSV + optional API push).
-3. **New Joinee KT Tracker** — topics per joinee with Completed/Pending toggles + progress.
+2. **Case QA** — case-handling QC scorecard: score each case against the case-handling QC
+   parameters (Yes / No / NA) with per-case owner attribution, adherence %, and Pass/Fail vs a
+   target (critical parameters auto-fail). Mirrors the Call QA page. *(The Jira Ticket QA
+   timeliness/documentation report + PMI export still runs under `/qa-scores`; it is no longer
+   linked in the sidebar but its data and endpoints are preserved.)*
+3. **KT OPS** — new-joinee onboarding: knowledge-transfer topics per joinee (Completed/Pending
+   toggles + progress) **and** project **access provisioning** (select CloudOps / VNA / PACS to
+   apply a standard access list, then track each access as Pending / Granted / N/A).
 4. **Maintenance Activity Tracker** — within-time vs exceeded; monthly **top maintainer** and
    **missed-timeline** highlights.
-5. **Call QA** — call quality on opening, information captured, dead air, closing, plus
-   case-creation & call-close times (with breach flags).
+5. **Call QA** — call-handling QC scorecard: score each call against the call-handling QC
+   parameters (Yes / No / NA) with call-handler attribution, adherence %, and Pass/Fail vs a
+   target (critical parameters auto-fail). **Call QA** and **Case QA** sit together in the nav.
 
 ## Tech stack
 
@@ -116,13 +122,32 @@ The Login screen also has one-click **dev login** buttons. Change `JWT_SECRET` i
 
 - **Full CRUD** (create/edit/delete) on every tab, with confirmation dialogs and toasts;
   searchable / sortable / paginated tables.
-- **Dashboard** shows month-over-month **deltas**, an **alerts** panel (below-target
-  utilization, overdue KT, repeat timeline-missers, call-time breaches), and **trend charts**.
-- **Settings** (Admin) — configure QA/Call weighting, time thresholds, utilization target
-  (RAG status), and whether call scores are included in the PMI report.
+- **Dashboard** shows month-over-month **deltas**, a **KPI strip with sparklines**, a
+  **Failed SLA cases** panel (Call/Case QC evaluations that missed target or critical-failed), and
+  **trend charts** (theme-aware).
+- **Modular sections** — the sidebar is **data-driven** (`NavSection`); admins can **rename,
+  reorder, and enable/disable** sections in **Settings → Sections & navigation** (default order:
+  Dashboard, Time Utilization, Call QA, Case QA, KT OPS, Maintenance).
+- **In-app QC parameters** — from **Call QA** and **Case QA**, admins/leads can **add, edit,
+  reorder, mark-critical, and activate/deactivate** parameters (`/api/qc-parameters`); serials
+  auto-number **1..N** per section. Removing a used parameter deactivates it to preserve history.
+- **KT OPS** shows one **joiner selected from a dropdown** (KT topics + access list on demand).
+- **Light/Dark theme** toggle in the sidebar; all surfaces, controls, and charts are token-driven
+  and recolour on switch (persisted, flash-free), with app-wide animations.
+- **Settings** (Admin) — configure **Call QC** and **Case QC** targets/points, time thresholds,
+  utilization target (RAG status), PMI options, and the section layout.
 - **Users** (Admin) — manage login accounts and roles.
 - **QA report** exports **CSV** and **PDF** (server-generated) and can be sent to PMI.
-- **KT** — templates, per-topic target dates with overdue flags, notes, and mentor sign-off.
+- **KT OPS** — knowledge transfer (templates, per-topic target dates with overdue flags, notes,
+  and mentor sign-off) **plus access lists**: seeded standard accesses per project
+  (CloudOps: JIRA, VPN, Qualis, Azure, mCloud ID, GitHub, SecureLink, Jumpboxes, PagerDuty;
+  VNA & PACS: SecureLink, Support JIRA, Salesforce, VPN). Apply a project's list to a joinee
+  (`POST /api/kt/joinees/:id/access/apply`), **mark each access complete** (Pending → Granted,
+  with N/A option) via `PATCH /api/kt/joinee-access/:id`, and add ad-hoc accesses to a project
+  (`POST /api/kt/projects/:projectId/access-items`). The KT and access lists render side-by-side
+  per joinee; an **owner dropdown** (from `/api/employees`) attributes accesses on completion and
+  shows that person's pending vs. complete totals, with a **Pending only** filter and
+  **Mark all complete** shortcut.
 - **Jira** — `GET /api/jira/tickets` returns mock data, or live issues when `JIRA_*` env vars
   are set.
 
