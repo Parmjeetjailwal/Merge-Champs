@@ -17,8 +17,6 @@ model Employee {
   createdAt DateTime @default(now())
 
   timeRecords     TimeUtilizationRecord[]
-  qaScores        QAScore[]             @relation("AgentScores")
-  evaluatedScores QAScore[]             @relation("Evaluator")
   maintenance     MaintenanceActivity[]
   qcCallHandled   CallQcEvaluation[]    @relation("CallHandler")
   qcCaseOwned     CallQcEvaluation[]    @relation("CaseOwner")
@@ -37,30 +35,6 @@ model TimeUtilizationRecord {
   uploadedAt         DateTime @default(now())
 
   @@unique([employeeId, period])
-}
-
-model QAScore {
-  id                 String    @id @default(cuid())
-  agent              Employee  @relation("AgentScores", fields: [employeeId], references: [id])
-  employeeId         String
-  jiraTicketKey      String
-  timelinessScore    Float
-  documentationScore Float
-  totalScore         Float
-  evaluationDate     DateTime  @default(now())
-  period             String // YYYY-MM
-  evaluator          Employee? @relation("Evaluator", fields: [evaluatorId], references: [id])
-  evaluatorId        String?
-  comments           String?
-}
-
-model QAReport {
-  id            String   @id @default(cuid())
-  period        String
-  generatedAt   DateTime @default(now())
-  exportedToPMI Boolean  @default(false)
-  pmiReference  String?
-  payload       String // JSON string of the PMI export
 }
 
 model Joinee {
@@ -206,6 +180,7 @@ model NavSection {
   order     Int      @default(0)
   enabled   Boolean  @default(true)
   adminOnly Boolean  @default(false)
+  allowedRoles String @default("") // comma-separated roles; empty = all roles (Admin always sees all)
   createdAt DateTime @default(now())
 }
 

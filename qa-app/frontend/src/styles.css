@@ -120,6 +120,30 @@ body {
 /* ============================================================ Layout */
 .app { display: flex; min-height: 100vh; }
 
+/* Content column (topbar + scrollable main) */
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* Top bar */
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 22px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  backdrop-filter: saturate(140%) blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-title { min-width: 0; }
+.topbar-title h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.role-pill {
+  font-size: 12px; font-weight: 650; color: var(--primary-dark);
+  background: var(--primary-soft); border: 1px solid #c7d2fe;
+  padding: 5px 11px; border-radius: 999px; white-space: nowrap;
+}
+[data-theme='dark'] .role-pill { border-color: #37407a; color: #c7d2fe; }
+.icon-btn.ghost { background: transparent; color: var(--text-soft); border: 1px solid var(--border-strong); }
+.icon-btn.ghost:hover { background: var(--panel-2); color: var(--text); border-color: var(--muted); }
+
 .sidebar {
   width: 256px;
   background: linear-gradient(180deg, var(--sidebar-1) 0%, var(--sidebar-2) 100%);
@@ -147,6 +171,7 @@ body {
 
 /* Nav */
 .nav { display: flex; flex-direction: column; gap: 3px; }
+.nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nav a {
   display: flex; align-items: center; gap: 11px;
   color: var(--sidebar-text); text-decoration: none;
@@ -200,6 +225,16 @@ body {
 /* Main */
 .main { flex: 1; padding: 30px 34px 48px; max-width: 1240px; width: 100%; animation: page-in 0.35s ease both; }
 @keyframes page-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* Collapsible sidebar */
+.app.collapsed .sidebar { width: 74px; padding-left: 10px; padding-right: 10px; }
+.app.collapsed .brand-name,
+.app.collapsed .nav-label,
+.app.collapsed .user-meta { display: none; }
+.app.collapsed .brand { justify-content: center; padding-left: 0; padding-right: 0; }
+.app.collapsed .nav a { justify-content: center; padding-left: 0; padding-right: 0; }
+.app.collapsed .user-card { justify-content: center; padding-left: 6px; padding-right: 6px; }
+.sidebar { transition: width var(--t); }
 
 .page-title { margin: 0 0 4px; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
 .page-sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
@@ -434,7 +469,7 @@ input[type='file'] { font-size: 13px; }
 .row-actions { display: inline-flex; gap: 6px; }
 
 /* KPI strip (dashboard) */
-.kpi-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 18px; }
+.kpi-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .kpi {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px 16px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 6px;

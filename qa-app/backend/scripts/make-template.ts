@@ -23,11 +23,6 @@ write('time-utilization-template.xlsx', 'TimeUtilization', [
   { 'Employee Name': 'Dan Lee', Email: 'dan@example.com', Team: 'Support', Period: '2026-07', 'Planned Hours': 160, 'Actual/Billable Hours': 96 },
 ]);
 
-write('qa-scores-template.xlsx', 'JiraTicketQA', [
-  { 'Team Member': 'Ana Sharma', Email: 'ana@example.com', 'Jira Ticket Key': 'PROJ-101', Timeliness: 5, Documentation: 5, 'Evaluation Date': '2026-07-10', Comments: 'Great turnaround' },
-  { 'Team Member': 'Ben Carter', Email: 'ben@example.com', 'Jira Ticket Key': 'PROJ-110', Timeliness: 3, Documentation: 4, 'Evaluation Date': '2026-07-11', Comments: '' },
-]);
-
 write('kt-template.xlsx', 'NewJoineeKT', [
   { Joinee: 'Grace Miller', Team: 'QA', Mentor: 'Eva Novak', 'Join Date': '2026-06-15', Topic: 'Codebase Overview', Status: 'Completed', 'Target Date': '' },
   { Joinee: 'Grace Miller', Team: 'QA', Mentor: 'Eva Novak', 'Join Date': '2026-06-15', Topic: 'Release Process', Status: 'Pending', 'Target Date': '2026-07-20' },

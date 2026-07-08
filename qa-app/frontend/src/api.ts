@@ -1,6 +1,14 @@
 import axios from 'axios';
 
-export const ROLES = ['Admin', 'QA Lead', 'Call QA Analyst', 'Team Member'] as const;
+export const ROLES = [
+  'Admin',
+  'QA Lead',
+  'Call QA Analyst',
+  'Maintenance',
+  'Time Analyst',
+  'Trainee',
+  'Team Member',
+] as const;
 export type Role = (typeof ROLES)[number];
 
 const TOKEN_KEY = 'qa-token';

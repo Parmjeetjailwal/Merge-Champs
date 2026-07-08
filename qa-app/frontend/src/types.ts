@@ -23,50 +23,6 @@ export interface TimeView {
   bottom: TimeRecord[];
 }
 
-export interface QAScore {
-  id: string;
-  employeeId: string;
-  jiraTicketKey: string;
-  timelinessScore: number;
-  documentationScore: number;
-  totalScore: number;
-  evaluationDate: string;
-  period: string;
-  comments: string | null;
-  agent: Employee;
-}
-
-export interface QAReportMember {
-  employeeId: string;
-  name: string;
-  ticketsEvaluated: number;
-  avgTimeliness: number;
-  avgDocumentation: number;
-  avgTotalScore: number;
-  tickets: {
-    jiraTicketKey: string;
-    timelinessScore: number;
-    documentationScore: number;
-    totalScore: number;
-    evaluationDate: string;
-  }[];
-}
-
-export interface QAReport {
-  reportId: string;
-  exportedToPMI: boolean;
-  weighting: { timeliness: number; documentation: number; scaleMax: number };
-  payload: { reportId: string; period: string; generatedAt: string; teamMembers: QAReportMember[] };
-}
-
-export interface QAReportSummary {
-  id: string;
-  period: string;
-  generatedAt: string;
-  exportedToPMI: boolean;
-  pmiReference: string | null;
-}
-
 export interface KTTopic {
   id: string;
   topicName: string;
@@ -222,25 +178,32 @@ export interface CallQaView {
 export interface DashboardData {
   period: string;
   previousPeriod: string;
-  deltas: { utilization: number; qa: number; callQa: number; caseQa: number; maintenanceOnTime: number };
-  timeUtilization: { top: TimeRecord[]; bottom: TimeRecord[]; count: number; averageUtilization: number; target: number };
-  qa: { averageScore: number; members: { employeeId: string; name: string; avgTotalScore: number; ticketsEvaluated: number }[] };
-  kt: { joinees: { id: string; name: string; completed: number; total: number; percent: number }[] };
+  visible: {
+    timeUtilization: boolean;
+    kt: boolean;
+    maintenance: boolean;
+    callQa: boolean;
+    caseQa: boolean;
+    failedSla: boolean;
+  };
+  deltas: { utilization: number; callQa: number; caseQa: number; maintenanceOnTime: number };
+  timeUtilization: { top: TimeRecord[]; bottom: TimeRecord[]; count: number; averageUtilization: number; target: number } | null;
+  kt: { joinees: { id: string; name: string; completed: number; total: number; percent: number }[] } | null;
   maintenance: {
     topMaintainer: { employeeId: string; name: string; count: number } | null;
     missedTimeline: { employeeId: string; name: string; exceededCount: number }[];
     onTimePercent: number;
-  };
+  } | null;
   callQa: {
     averageScore: number;
     topImprovementArea: { key: string; label: string; avg: number } | null;
     perAgent: { employeeId: string; name: string; evaluations: number; avgScore: number }[];
-  };
+  } | null;
   caseQa: {
     averageScore: number;
     topImprovementArea: { key: string; label: string; avg: number } | null;
     perAgent: { employeeId: string; name: string; evaluations: number; avgScore: number }[];
-  };
+  } | null;
   failedSla: {
     count: number;
     cases: {
@@ -253,7 +216,7 @@ export interface DashboardData {
       target: number;
       criticalFailed: boolean;
     }[];
-  };
+  } | null;
 }
 
 export interface NavSection {
@@ -265,6 +228,7 @@ export interface NavSection {
   order: number;
   enabled: boolean;
   adminOnly: boolean;
+  allowedRoles?: string;
 }
 
 export interface AppConfig {

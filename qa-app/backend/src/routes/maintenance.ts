@@ -116,7 +116,7 @@ maintenanceRouter.get(
 // POST /api/maintenance
 maintenanceRouter.post(
   '/',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'Maintenance'),
   asyncHandler(async (req, res) => {
     const { title, employeeId, scheduledStart, scheduledEnd, actualStart, actualEnd } = req.body ?? {};
     if (!title || !employeeId || !scheduledStart || !scheduledEnd || !actualStart || !actualEnd) {
@@ -153,7 +153,7 @@ maintenanceRouter.post(
 // POST /api/maintenance/upload  (multipart field: file)
 maintenanceRouter.post(
   '/upload',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'Maintenance'),
   upload.single('file'),
   asyncHandler(async (req, res) => {
     const file = (req as unknown as { file?: { buffer: Buffer } }).file;
@@ -211,7 +211,7 @@ maintenanceRouter.post(
 // PATCH /api/maintenance/:id  -> edit an activity (recomputes status + month)
 maintenanceRouter.patch(
   '/:id',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'Maintenance'),
   asyncHandler(async (req, res) => {
     const existing = await prisma.maintenanceActivity.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Activity not found.' });
@@ -246,7 +246,7 @@ maintenanceRouter.patch(
 // DELETE /api/maintenance/:id
 maintenanceRouter.delete(
   '/:id',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'Maintenance'),
   asyncHandler(async (req, res) => {
     await prisma.maintenanceActivity.delete({ where: { id: req.params.id } });
     res.status(204).end();

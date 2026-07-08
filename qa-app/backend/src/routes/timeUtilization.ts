@@ -100,7 +100,7 @@ timeUtilizationRouter.get(
 // POST /api/time-utilization/upload  (multipart form field: file)
 timeUtilizationRouter.post(
   '/upload',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'QA Lead', 'Time Analyst'),
   upload.single('file'),
   asyncHandler(async (req, res) => {
     const file = (req as unknown as { file?: { buffer: Buffer; originalname: string } }).file;
@@ -203,7 +203,7 @@ timeUtilizationRouter.post(
 // POST /api/time-utilization  -> manually add/replace a single record
 timeUtilizationRouter.post(
   '/',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'QA Lead', 'Time Analyst'),
   asyncHandler(async (req, res) => {
     const { employeeId, period, plannedHours, actualHours } = req.body ?? {};
     const planned = Number(plannedHours);
@@ -225,7 +225,7 @@ timeUtilizationRouter.post(
 // PATCH /api/time-utilization/:id
 timeUtilizationRouter.patch(
   '/:id',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'QA Lead', 'Time Analyst'),
   asyncHandler(async (req, res) => {
     const existing = await prisma.timeUtilizationRecord.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Record not found.' });
@@ -246,7 +246,7 @@ timeUtilizationRouter.patch(
 // DELETE /api/time-utilization/:id
 timeUtilizationRouter.delete(
   '/:id',
-  requireRole('Admin', 'QA Lead'),
+  requireRole('Admin', 'QA Lead', 'Time Analyst'),
   asyncHandler(async (req, res) => {
     await prisma.timeUtilizationRecord.delete({ where: { id: req.params.id } });
     res.status(204).end();

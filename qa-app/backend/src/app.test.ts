@@ -27,11 +27,11 @@ describe('API integration', () => {
     expect(r.body.timeUtilization).toBeDefined();
   });
 
-  it('blocks unauthorized QA write (Team Member)', async () => {
+  it('blocks unauthorized maintenance write (Trainee)', async () => {
     const r = await request(app)
-      .post('/api/qa-scores')
-      .set('x-role', 'Team Member')
-      .send({ employeeId: 'x', jiraTicketKey: 'Y', timelinessScore: 1, documentationScore: 1 });
+      .post('/api/maintenance')
+      .set('x-role', 'Trainee')
+      .send({ title: 'X' });
     expect(r.status).toBe(403);
   });
 
@@ -40,10 +40,26 @@ describe('API integration', () => {
     expect(r.status).toBe(401);
   });
 
-  it('GET /api/jira/tickets returns tickets', async () => {
-    const r = await request(app).get('/api/jira/tickets');
+  it('GET /api/sections is scoped to the Trainee role (Dashboard + KT only)', async () => {
+    const r = await request(app).get('/api/sections').set('x-role', 'Trainee');
     expect(r.status).toBe(200);
-    expect(Array.isArray(r.body.tickets)).toBe(true);
+    const keys = (r.body as { key: string }[]).map((s) => s.key).sort();
+    expect(keys).toEqual(['dashboard', 'kt']);
+  });
+
+  it('GET /api/sections is scoped to the Maintenance role (Dashboard + Maintenance only)', async () => {
+    const r = await request(app).get('/api/sections').set('x-role', 'Maintenance');
+    expect(r.status).toBe(200);
+    const keys = (r.body as { key: string }[]).map((s) => s.key).sort();
+    expect(keys).toEqual(['dashboard', 'maintenance']);
+  });
+
+  it('scopes the dashboard payload to the Trainee role', async () => {
+    const r = await request(app).get('/api/dashboard').set('x-role', 'Trainee');
+    expect(r.status).toBe(200);
+    expect(r.body.visible.kt).toBe(true);
+    expect(r.body.visible.maintenance).toBe(false);
+    expect(r.body.maintenance).toBeNull();
   });
 
   it('GET /api/call-qa/parameters returns grouped QC parameters', async () => {

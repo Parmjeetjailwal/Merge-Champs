@@ -5,7 +5,6 @@ import cors from 'cors';
 import { config } from './config';
 import { employeesRouter } from './routes/employees';
 import { timeUtilizationRouter } from './routes/timeUtilization';
-import { qaScoresRouter } from './routes/qaScores';
 import { ktRouter } from './routes/kt';
 import { maintenanceRouter } from './routes/maintenance';
 import { callQaRouter } from './routes/callQa';
@@ -16,7 +15,6 @@ import { dashboardRouter } from './routes/dashboard';
 import { settingsRouter } from './routes/settings';
 import { authRouter } from './routes/auth';
 import { usersRouter } from './routes/users';
-import { jiraRouter } from './routes/jira';
 
 export const app = express();
 app.use(cors());
@@ -24,7 +22,7 @@ app.use(express.json());
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/config', (_req, res) =>
-  res.json({ qa: config.qa, callQa: config.callQa, pmiConfigured: Boolean(config.pmiApiUrl) })
+  res.json({ callQa: config.callQa, pmiConfigured: Boolean(config.pmiApiUrl) })
 );
 
 app.use('/api/auth', authRouter);
@@ -32,20 +30,17 @@ app.use('/api/users', usersRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/employees', employeesRouter);
 app.use('/api/time-utilization', timeUtilizationRouter);
-app.use('/api/qa-scores', qaScoresRouter);
 app.use('/api/kt', ktRouter);
 app.use('/api/maintenance', maintenanceRouter);
 app.use('/api/call-qa', callQaRouter);
 app.use('/api/case-qa', caseQaRouter);
 app.use('/api/qc-parameters', qcParamsRouter);
 app.use('/api/sections', sectionsRouter);
-app.use('/api/jira', jiraRouter);
 app.use('/api/dashboard', dashboardRouter);
 
 // Downloadable Excel import templates (served under /api so the dev proxy forwards them).
 const TEMPLATES: Record<string, string> = {
   'time-utilization': 'time-utilization-template.xlsx',
-  'qa-scores': 'qa-scores-template.xlsx',
   kt: 'kt-template.xlsx',
   maintenance: 'maintenance-template.xlsx',
   'call-qa': 'call-qa-template.xlsx',

@@ -6,9 +6,7 @@ across **five modules**:
 1. **Time Utilization** — imported from Excel; highlights **top 2 / bottom 2** by utilization.
 2. **Case QA** — case-handling QC scorecard: score each case against the case-handling QC
    parameters (Yes / No / NA) with per-case owner attribution, adherence %, and Pass/Fail vs a
-   target (critical parameters auto-fail). Mirrors the Call QA page. *(The Jira Ticket QA
-   timeliness/documentation report + PMI export still runs under `/qa-scores`; it is no longer
-   linked in the sidebar but its data and endpoints are preserved.)*
+   target (critical parameters auto-fail). Mirrors the Call QA page.
 3. **KT OPS** — new-joinee onboarding: knowledge-transfer topics per joinee (Completed/Pending
    toggles + progress) **and** project **access provisioning** (select CloudOps / VNA / PACS to
    apply a standard access list, then track each access as Pending / Granted / N/A).
@@ -106,14 +104,37 @@ Sign in with email + password (JWT). The token is stored client-side and sent as
 `Bearer` header; the backend enforces role permissions. For local dev, an `x-role` header
 fallback is still accepted (handy for scripts/tests).
 
+### Role access matrix
+
+Access is **role-based**: each role only sees the tabs/dashboards it is permitted to. The
+matrix is enforced on the backend (`SECTION_ACCESS` in `backend/src/middleware/roles.ts`,
+role-scoped `/api/sections` and `/api/dashboard`, and `requireRole` on every write) and
+mirrored on the frontend (`frontend/src/perms.ts`, nav filtering, and route guards).
+
+| Role | Dashboard | KT OPS | Time Utilization | Call QA | Case QA | Maintenance | Settings/Users |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| **Admin** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **QA Lead** | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
+| **Call QA Analyst** | ✅ | — | — | ✅ | ✅ | — | — |
+| **Maintenance** | ✅ | — | — | — | — | ✅ | — |
+| **Time Analyst** | ✅ | — | ✅ | — | — | — | — |
+| **Trainee** (new joiner) | ✅ | ✅ | — | — | — | — | — |
+| **Team Member** | ✅ | — | — | — | — | — | — |
+
+The Dashboard is always visible but its **content is scoped to the role** (a role only sees the
+KPIs/cards/trends for modules it can access).
+
 **Seeded logins:**
 
-| Role | Email | Password | Can write |
-|---|---|---|---|
-| **Admin** | admin@example.com | admin123 | everything + Settings + Users |
-| **QA Lead** | qalead@example.com | qalead123 | time upload, QA scores/report/PMI, KT, maintenance |
-| **Call QA Analyst** | analyst@example.com | analyst123 | call evaluations |
-| **Team Member** | member@example.com | member123 | read-only |
+| Role | Email | Password |
+|---|---|---|
+| **Admin** | admin@example.com | admin123 |
+| **QA Lead** | qalead@example.com | qalead123 |
+| **Call QA Analyst** | analyst@example.com | analyst123 |
+| **Maintenance** | maintenance@example.com | maint123 |
+| **Time Analyst** | time@example.com | time123 |
+| **Trainee** | trainee@example.com | trainee123 |
+| **Team Member** | member@example.com | member123 |
 
 The Login screen also has one-click **dev login** buttons. Change `JWT_SECRET` in
 `backend/.env` for production.
@@ -148,8 +169,10 @@ The Login screen also has one-click **dev login** buttons. Change `JWT_SECRET` i
   per joinee; an **owner dropdown** (from `/api/employees`) attributes accesses on completion and
   shows that person's pending vs. complete totals, with a **Pending only** filter and
   **Mark all complete** shortcut.
-- **Jira** — `GET /api/jira/tickets` returns mock data, or live issues when `JIRA_*` env vars
-  are set.
+
+> **Note:** the legacy **Jira Ticket QA** module (timeliness/documentation scores + PMI export)
+> and the `/api/jira` and `/api/qa-scores` endpoints have been **removed**. The generic scoring
+> helper `computeQaTotal` is retained as a unit-tested utility only.
 
 ## Excel import format (Time Utilization)
 
@@ -162,22 +185,11 @@ Columns (header names are matched case-insensitively, with common aliases):
 A ready-made template is generated at `docs/time-utilization-template.xlsx`
 (`npm --prefix backend run make:template`). `.xlsx`, `.xls` and `.csv` are all accepted.
 
-## PMI export
-
-- **QA report** is available as on-screen data, **CSV** (`/api/qa-scores/report/export.csv`),
-  and a **printable PDF** (browser Print / Save as PDF on the report panel).
-- **Send to PMI** marks the report exported. If `PMI_API_URL` is set in `backend/.env`, the
-  report JSON is POSTed there; otherwise it is marked exported and available as JSON/CSV.
-- PMI export JSON schema matches `§5` of the source prompt (`teamMembers[]` with per-ticket
-  breakdown).
-
 ## Configuration (`backend/.env`)
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | 4000 | API port |
-| `QA_WEIGHT_TIMELINESS` / `QA_WEIGHT_DOCUMENTATION` | 0.5 / 0.5 | QA score weighting |
-| `QA_SCALE_MAX` | 5 | QA parameter scale |
 | `CALLQA_WEIGHT_*` | 0.25 each | Call QA parameter weighting |
 | `CALLQA_CASE_CREATION_THRESHOLD_SECS` | 120 | Flag slow case creation |
 | `CALLQA_CALL_CLOSE_THRESHOLD_SECS` | 60 | Flag slow call close |

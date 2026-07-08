@@ -381,7 +381,7 @@ export function createQcRouter(section: QcSection): Router {
   // POST / -> create
   router.post(
     '/',
-    requireRole('Admin', 'Call QA Analyst'),
+    requireRole('Admin', 'QA Lead', 'Call QA Analyst'),
     asyncHandler(async (req, res) => {
       const b = req.body ?? {};
       const personId = b[cfg.personField];
@@ -435,7 +435,7 @@ export function createQcRouter(section: QcSection): Router {
   // PATCH /:id -> edit header and/or answers (recomputes scores)
   router.patch(
     '/:id',
-    requireRole('Admin', 'Call QA Analyst'),
+    requireRole('Admin', 'QA Lead', 'Call QA Analyst'),
     asyncHandler(async (req, res) => {
       const existing = await loadEvaluation(req.params.id);
       if (!existing || existing.kind !== section) return res.status(404).json({ error: 'Evaluation not found.' });
@@ -498,7 +498,7 @@ export function createQcRouter(section: QcSection): Router {
   // DELETE /:id
   router.delete(
     '/:id',
-    requireRole('Admin', 'Call QA Analyst'),
+    requireRole('Admin', 'QA Lead', 'Call QA Analyst'),
     asyncHandler(async (req, res) => {
       const existing = await prisma.callQcEvaluation.findUnique({ where: { id: req.params.id }, select: { kind: true } });
       if (!existing || existing.kind !== section) return res.status(404).json({ error: 'Evaluation not found.' });
@@ -510,7 +510,7 @@ export function createQcRouter(section: QcSection): Router {
   // POST /upload (multipart field: file)
   router.post(
     '/upload',
-    requireRole('Admin', 'Call QA Analyst'),
+    requireRole('Admin', 'QA Lead', 'Call QA Analyst'),
     upload.single('file'),
     asyncHandler(async (req, res) => {
       const file = (req as unknown as { file?: { buffer: Buffer } }).file;

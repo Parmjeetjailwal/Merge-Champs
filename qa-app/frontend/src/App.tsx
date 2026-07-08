@@ -1,5 +1,5 @@
-import { NavLink, Route, Routes } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { NavLink, Route, Routes, Navigate, useLocation } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard,
   Clock,
@@ -13,15 +13,17 @@ import {
   LogOut,
   Moon,
   Sun,
+  PanelLeftClose,
+  PanelLeftOpen,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthContext';
-import { api } from './api';
+import { api, type Role } from './api';
+import { canAccessSection, sectionKeyForPath } from './perms';
 import type { NavSection } from './types';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { TimeUtilization } from './pages/TimeUtilization';
-import { QAScores } from './pages/QAScores';
 import { KTTracker } from './pages/KTTracker';
 import { Maintenance } from './pages/Maintenance';
 import { CallQA } from './pages/CallQA';
@@ -69,12 +71,19 @@ function initials(email: string): string {
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? parts[0]?.[1] ?? '')).toUpperCase() || 'U';
 }
 
+/** Guards a route: renders children only if the role may access `section`, else redirects home. */
+function Guard({ role, section, children }: { role: Role; section: string; children: React.ReactNode }) {
+  return canAccessSection(role, section) ? <>{children}</> : <Navigate to="/" replace />;
+}
+
 export function App() {
   const { user, loading, logout } = useAuth();
+  const location = useLocation();
   const [theme, setTheme] = useState<'light' | 'dark'>(
     () => (document.documentElement.dataset.theme as 'light' | 'dark') || (localStorage.getItem('qa-theme') as 'light' | 'dark') || 'light'
   );
   const [sections, setSections] = useState<NavSection[]>([]);
+  const [collapsed, setCollapsed] = useState<boolean>(() => localStorage.getItem('qa-sidebar') === 'collapsed');
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -82,9 +91,26 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
+    localStorage.setItem('qa-sidebar', collapsed ? 'collapsed' : 'open');
+  }, [collapsed]);
+
+  useEffect(() => {
     if (!user) return;
     api.get<NavSection[]>('/sections').then((r) => setSections(r.data)).catch(() => {});
   }, [user]);
+
+  const role = (user?.role ?? 'Team Member') as Role;
+  const isAdmin = role === 'Admin';
+
+  const nav: NavItem[] = useMemo(() => {
+    if (sections.length > 0) {
+      return sections
+        .filter((s) => s.enabled && (!s.adminOnly || isAdmin))
+        .map((s) => ({ to: s.path, label: s.label, icon: ICONS[s.icon] ?? LayoutDashboard, end: s.path === '/' }));
+    }
+    const base = fallbackNav.filter((n) => canAccessSection(role, sectionKeyForPath(n.to)));
+    return isAdmin ? [...base, ...adminNav] : base;
+  }, [sections, isAdmin, role]);
 
   if (loading) {
     return (
@@ -98,18 +124,11 @@ export function App() {
 
   if (!user) return <Login />;
 
-  const isAdmin = user.role === 'Admin';
-  const nav: NavItem[] =
-    sections.length > 0
-      ? sections
-          .filter((s) => s.enabled && (!s.adminOnly || isAdmin))
-          .map((s) => ({ to: s.path, label: s.label, icon: ICONS[s.icon] ?? LayoutDashboard, end: s.path === '/' }))
-      : isAdmin
-      ? [...fallbackNav, ...adminNav]
-      : fallbackNav;
+  const activeLabel =
+    nav.find((n) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)))?.label ?? 'Dashboard';
 
   return (
-    <div className="app">
+    <div className={`app${collapsed ? ' collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-logo">
@@ -123,11 +142,11 @@ export function App() {
           {nav.map((n) => {
             const Icon = n.icon;
             return (
-              <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => (isActive ? 'active' : '')}>
+              <NavLink key={n.to} to={n.to} end={n.end} title={n.label} className={({ isActive }) => (isActive ? 'active' : '')}>
                 <span className="nav-ico">
                   <Icon size={18} />
                 </span>
-                {n.label}
+                <span className="nav-label">{n.label}</span>
               </NavLink>
             );
           })}
@@ -139,32 +158,101 @@ export function App() {
             <div className="user-email">{user.email}</div>
             <div className="user-role">{user.role}</div>
           </div>
-          <button
-            className="icon-btn"
-            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            aria-label="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
           <button className="icon-btn" onClick={logout} title="Log out" aria-label="Log out">
             <LogOut size={16} />
           </button>
         </div>
       </aside>
-      <main className="main">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/time-utilization" element={<TimeUtilization />} />
-          <Route path="/qa-scores" element={<QAScores />} />
-          <Route path="/kt" element={<KTTracker />} />
-          <Route path="/maintenance" element={<Maintenance />} />
-          <Route path="/call-qa" element={<CallQA />} />
-          <Route path="/case-qa" element={<CaseQA />} />
-          {isAdmin && <Route path="/settings" element={<Settings />} />}
-          {isAdmin && <Route path="/users" element={<Users />} />}
-        </Routes>
-      </main>
+      <div className="content">
+        <header className="topbar">
+          <button
+            className="icon-btn ghost"
+            onClick={() => setCollapsed((c) => !c)}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label="Toggle sidebar"
+          >
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
+          <div className="topbar-title">
+            <h1>{activeLabel}</h1>
+          </div>
+          <div className="topbar-right">
+            <span className="role-pill" title="Your role">
+              {user.role}
+            </span>
+            <button
+              className="icon-btn ghost"
+              onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+              title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              aria-label="Toggle theme"
+            >
+              {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+            </button>
+          </div>
+        </header>
+        <main className="main">
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route
+              path="/time-utilization"
+              element={
+                <Guard role={role} section="time-utilization">
+                  <TimeUtilization />
+                </Guard>
+              }
+            />
+            <Route
+              path="/kt"
+              element={
+                <Guard role={role} section="kt">
+                  <KTTracker />
+                </Guard>
+              }
+            />
+            <Route
+              path="/maintenance"
+              element={
+                <Guard role={role} section="maintenance">
+                  <Maintenance />
+                </Guard>
+              }
+            />
+            <Route
+              path="/call-qa"
+              element={
+                <Guard role={role} section="call-qa">
+                  <CallQA />
+                </Guard>
+              }
+            />
+            <Route
+              path="/case-qa"
+              element={
+                <Guard role={role} section="case-qa">
+                  <CaseQA />
+                </Guard>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <Guard role={role} section="settings">
+                  <Settings />
+                </Guard>
+              }
+            />
+            <Route
+              path="/users"
+              element={
+                <Guard role={role} section="users">
+                  <Users />
+                </Guard>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
+      </div>
     </div>
   );
 }

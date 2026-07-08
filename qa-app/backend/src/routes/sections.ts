@@ -1,18 +1,20 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { asyncHandler } from '../lib/asyncHandler';
-import { requireRole, resolveRole } from '../middleware/roles';
+import { requireRole, resolveRole, canAccessSection } from '../middleware/roles';
 
 export const sectionsRouter = Router();
 
-// GET /api/sections -> ordered sections (admins get all incl. disabled; others get enabled only)
+// GET /api/sections -> sections the caller's role may access (Admin gets all, incl. disabled).
 sectionsRouter.get(
   '/',
   asyncHandler(async (req, res) => {
-    const isAdmin = resolveRole(req) === 'Admin';
+    const role = resolveRole(req);
+    const isAdmin = role === 'Admin';
     const where = isAdmin ? {} : { enabled: true };
     const sections = await prisma.navSection.findMany({ where, orderBy: { order: 'asc' } });
-    res.json(sections);
+    const visible = isAdmin ? sections : sections.filter((s) => !s.adminOnly && canAccessSection(role, s.key));
+    res.json(visible);
   })
 );
 

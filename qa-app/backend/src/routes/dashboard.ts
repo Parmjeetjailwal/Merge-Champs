@@ -3,11 +3,11 @@ import { prisma } from '../db';
 import { asyncHandler } from '../lib/asyncHandler';
 import { round2, toPeriod } from '../lib/calc';
 import { buildPeriodView } from './timeUtilization';
-import { buildQaReportPayload } from './qaScores';
 import { buildMaintenanceView } from './maintenance';
 import { buildCallQaView } from './callQa';
 import { buildCaseQaView } from './caseQa';
 import { getSettings } from '../settings';
+import { resolveRole, canAccessSection } from '../middleware/roles';
 
 export const dashboardRouter = Router();
 
@@ -34,28 +34,29 @@ dashboardRouter.get(
     const period = req.query.period ? String(req.query.period) : toPeriod(new Date());
     const prev = previousPeriod(period);
     const settings = await getSettings();
+    const role = resolveRole(req);
+    const canTime = canAccessSection(role, 'time-utilization');
+    const canCall = canAccessSection(role, 'call-qa');
+    const canCase = canAccessSection(role, 'case-qa');
+    const canKt = canAccessSection(role, 'kt');
+    const canMaint = canAccessSection(role, 'maintenance');
 
-    const [timeView, qaPayload, maintenanceView, callView, caseView, joinees, prevTime, prevQa, prevMaint, prevCall, prevCase] =
+    const [timeView, maintenanceView, callView, caseView, joinees, prevTime, prevMaint, prevCall, prevCase] =
       await Promise.all([
         buildPeriodView(period),
-        buildQaReportPayload(period),
         buildMaintenanceView(period),
         buildCallQaView(period),
         buildCaseQaView(period),
         prisma.joinee.findMany({ include: { topics: true }, orderBy: { joinDate: 'desc' } }),
         buildPeriodView(prev),
-        buildQaReportPayload(prev),
         buildMaintenanceView(prev),
         buildCallQaView(prev),
         buildCaseQaView(prev),
       ]);
 
-    const membersAvg = (members: { avgTotalScore: number }[]) =>
-      members.length ? round2(members.reduce((a, m) => a + m.avgTotalScore, 0) / members.length) : 0;
     const agentsAvg = (agents: { avgScore: number }[]) =>
       agents.length ? round2(agents.reduce((a, m) => a + m.avgScore, 0) / agents.length) : 0;
 
-    const qaAvg = membersAvg(qaPayload.teamMembers);
     const callAvg = agentsAvg(callView.perAgent);
     const caseAvg = agentsAvg(caseView.perAgent);
     const utilAvg = avgUtil(timeView.records as { utilizationPercent: number }[]);
@@ -63,7 +64,6 @@ dashboardRouter.get(
 
     const deltas = {
       utilization: round2(utilAvg - avgUtil(prevTime.records as { utilizationPercent: number }[])),
-      qa: round2(qaAvg - membersAvg(prevQa.teamMembers)),
       callQa: round2(callAvg - agentsAvg(prevCall.perAgent)),
       caseQa: round2(caseAvg - agentsAvg(prevCase.perAgent)),
       maintenanceOnTime: maintOnTime - onTimePercent(prevMaint.activities as { status: string }[]),
@@ -102,40 +102,47 @@ dashboardRouter.get(
     res.json({
       period,
       previousPeriod: prev,
+      visible: {
+        timeUtilization: canTime,
+        kt: canKt,
+        maintenance: canMaint,
+        callQa: canCall,
+        caseQa: canCase,
+        failedSla: canCall || canCase,
+      },
       deltas,
-      timeUtilization: {
-        top: timeView.top,
-        bottom: timeView.bottom,
-        count: timeView.records.length,
-        averageUtilization: utilAvg,
-        target,
-      },
-      qa: {
-        averageScore: qaAvg,
-        members: qaPayload.teamMembers.map((m) => ({
-          employeeId: m.employeeId,
-          name: m.name,
-          avgTotalScore: m.avgTotalScore,
-          ticketsEvaluated: m.ticketsEvaluated,
-        })),
-      },
-      kt: { joinees: ktSummary },
-      maintenance: {
-        topMaintainer: maintenanceView.topMaintainer,
-        missedTimeline: maintenanceView.missedTimeline,
-        onTimePercent: maintOnTime,
-      },
-      callQa: {
-        averageScore: callAvg,
-        topImprovementArea: callView.topImprovementArea,
-        perAgent: callView.perAgent,
-      },
-      caseQa: {
-        averageScore: caseAvg,
-        topImprovementArea: caseView.topImprovementArea,
-        perAgent: caseView.perAgent,
-      },
-      failedSla: { count: failedCases.length, cases: failedCases },
+      timeUtilization: canTime
+        ? {
+            top: timeView.top,
+            bottom: timeView.bottom,
+            count: timeView.records.length,
+            averageUtilization: utilAvg,
+            target,
+          }
+        : null,
+      kt: canKt ? { joinees: ktSummary } : null,
+      maintenance: canMaint
+        ? {
+            topMaintainer: maintenanceView.topMaintainer,
+            missedTimeline: maintenanceView.missedTimeline,
+            onTimePercent: maintOnTime,
+          }
+        : null,
+      callQa: canCall
+        ? {
+            averageScore: callAvg,
+            topImprovementArea: callView.topImprovementArea,
+            perAgent: callView.perAgent,
+          }
+        : null,
+      caseQa: canCase
+        ? {
+            averageScore: caseAvg,
+            topImprovementArea: caseView.topImprovementArea,
+            perAgent: caseView.perAgent,
+          }
+        : null,
+      failedSla: canCall || canCase ? { count: failedCases.length, cases: failedCases } : null,
     });
   })
 );

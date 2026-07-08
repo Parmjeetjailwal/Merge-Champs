@@ -3,7 +3,6 @@ import bcrypt from 'bcryptjs';
 import { config } from '../src/config';
 import {
   computeUtilizationPercent,
-  computeQaTotal,
   computeQcResult,
   maintenanceStatus,
   toPeriod,
@@ -21,8 +20,6 @@ async function main() {
   await prisma.callQcEvaluation.deleteMany();
   await prisma.qcParameter.deleteMany();
   await prisma.maintenanceActivity.deleteMany();
-  await prisma.qAScore.deleteMany();
-  await prisma.qAReport.deleteMany();
   await prisma.joineeAccess.deleteMany();
   await prisma.kTTopic.deleteMany();
   await prisma.joinee.deleteMany();
@@ -36,15 +33,15 @@ async function main() {
   await prisma.navSection.deleteMany();
   await prisma.employee.deleteMany();
 
-  // --- Navigation sections (data-driven; KT OPS + Maintenance after Case QA) ---
+  // --- Navigation sections (data-driven; RBAC via allowedRoles, empty = all roles) ---
   await prisma.navSection.createMany({
     data: [
-      { key: 'dashboard', label: 'Dashboard', path: '/', icon: 'LayoutDashboard', order: 0 },
-      { key: 'time-utilization', label: 'Time Utilization', path: '/time-utilization', icon: 'Clock', order: 1 },
-      { key: 'call-qa', label: 'Call QA', path: '/call-qa', icon: 'PhoneCall', order: 2 },
-      { key: 'case-qa', label: 'Case QA', path: '/case-qa', icon: 'ClipboardCheck', order: 3 },
-      { key: 'kt', label: 'KT OPS', path: '/kt', icon: 'GraduationCap', order: 4 },
-      { key: 'maintenance', label: 'Maintenance', path: '/maintenance', icon: 'Wrench', order: 5 },
+      { key: 'dashboard', label: 'Dashboard', path: '/', icon: 'LayoutDashboard', order: 0, allowedRoles: '' },
+      { key: 'time-utilization', label: 'Time Utilization', path: '/time-utilization', icon: 'Clock', order: 1, allowedRoles: 'QA Lead,Time Analyst' },
+      { key: 'call-qa', label: 'Call QA', path: '/call-qa', icon: 'PhoneCall', order: 2, allowedRoles: 'QA Lead,Call QA Analyst' },
+      { key: 'case-qa', label: 'Case QA', path: '/case-qa', icon: 'ClipboardCheck', order: 3, allowedRoles: 'QA Lead,Call QA Analyst' },
+      { key: 'kt', label: 'KT OPS', path: '/kt', icon: 'GraduationCap', order: 4, allowedRoles: 'QA Lead,Trainee' },
+      { key: 'maintenance', label: 'Maintenance', path: '/maintenance', icon: 'Wrench', order: 5, allowedRoles: 'Maintenance' },
       { key: 'settings', label: 'Settings', path: '/settings', icon: 'Settings', order: 6, adminOnly: true },
       { key: 'users', label: 'Users', path: '/users', icon: 'Users', order: 7, adminOnly: true },
     ],
@@ -62,6 +59,42 @@ async function main() {
     ].map((data) => prisma.employee.create({ data }))
   );
   const [ana, ben, cara, dan, eva, faisal] = employees;
+
+  // --- Additional bulk employees (deterministic dummy data; ~50 total) ---
+  const FIRST_NAMES = [
+    'Aarav', 'Isha', 'Liam', 'Noah', 'Olivia', 'Emma', 'Sofia', 'Mateo', 'Yuki', 'Wei',
+    'Priya', 'Omar', 'Zara', 'Diego', 'Nina', 'Ivan', 'Leah', 'Kai', 'Maya', 'Ravi',
+    'Elena', 'Hugo', 'Aisha', 'Tom', 'Lucia', 'Sven', 'Mei', 'Arjun', 'Fatima', 'Pablo',
+  ];
+  const LAST_NAMES = [
+    'Patel', 'Singh', 'Garcia', 'Kim', 'Chen', 'Ali', 'Brown', 'Nguyen', 'Rossi', 'Kowalski',
+    'Silva', 'Haddad', 'Ivanov', 'Suzuki', 'Dubois', 'Meyer', 'Popov', 'Andersson', 'Costa', 'Reyes',
+    'Okafor', 'Fischer', 'Novak', 'Marino', 'Bauer', 'Torres', 'Yamamoto', 'Cohen', 'Mensah', 'Larsen',
+  ];
+  const EXTRA_TEAMS = ['QA', 'Support', 'CloudOps', 'Infra'];
+  const extraSpecs = Array.from({ length: 44 }, (_, i) => {
+    const first = FIRST_NAMES[i % FIRST_NAMES.length];
+    const last = LAST_NAMES[(i * 5) % LAST_NAMES.length];
+    const team = EXTRA_TEAMS[i % EXTRA_TEAMS.length];
+    let role = 'Team Member';
+    if (i % 11 === 0) role = 'QA Lead';
+    else if (i % 7 === 0) role = 'Call QA Analyst';
+    else if (i % 9 === 0) role = 'Maintenance';
+    else if (i % 13 === 0) role = 'Time Analyst';
+    return {
+      name: `${first} ${last}`,
+      email: `${first.toLowerCase()}.${last.toLowerCase()}${i + 1}@example.com`,
+      team,
+      role,
+    };
+  });
+  const extraEmployees = await Promise.all(extraSpecs.map((data) => prisma.employee.create({ data })));
+  const allEmployees = [...employees, ...extraEmployees];
+
+  // Small deterministic PRNG so the generated metrics are reproducible across seeds.
+  let _seed = 987654321;
+  const rand = () => ((_seed = (_seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const randInt = (min: number, max: number) => min + Math.floor(rand() * (max - min + 1));
 
   // --- Time Utilization (current + previous period) ---
   const tu: Record<string, [typeof ana, number, number][]> = {
@@ -97,33 +130,22 @@ async function main() {
     }
   }
 
-  // --- Jira Ticket QA scores (current period) ---
-  const qaRows: [typeof ana, string, number, number][] = [
-    [ana, 'PROJ-101', 5, 5],
-    [ana, 'PROJ-102', 4, 5],
-    [ben, 'PROJ-110', 3, 4],
-    [ben, 'PROJ-111', 4, 3],
-    [cara, 'PROJ-120', 5, 4],
-    [cara, 'PROJ-121', 4, 4],
-    [dan, 'PROJ-130', 2, 3],
-    [dan, 'PROJ-131', 3, 2],
-  ];
-  let day = 2;
-  for (const [emp, key, t, d] of qaRows) {
-    const date = new Date(`${CURRENT}-${String(day++).padStart(2, '0')}T12:00:00`);
-    await prisma.qAScore.create({
-      data: {
-        employeeId: emp.id,
-        jiraTicketKey: key,
-        timelinessScore: t,
-        documentationScore: d,
-        totalScore: computeQaTotal(t, d, config.qa),
-        evaluationDate: date,
-        period: toPeriod(date),
-        evaluatorId: eva.id,
-        comments: null,
-      },
-    });
+  // Bulk time utilization for the additional employees (both periods).
+  for (const emp of extraEmployees) {
+    for (const period of [CURRENT, PREVIOUS]) {
+      const planned = 160;
+      const actual = randInt(88, 160);
+      await prisma.timeUtilizationRecord.create({
+        data: {
+          employeeId: emp.id,
+          period,
+          plannedHours: planned,
+          actualHours: actual,
+          utilizationPercent: computeUtilizationPercent(planned, actual),
+          sourceFile: 'seed',
+        },
+      });
+    }
   }
 
   // --- New Joinee KT tracker ---
@@ -186,6 +208,38 @@ async function main() {
   ];
   for (const [title, emp, schedMins, actMins, dayOffset] of maint) {
     const ss = new Date(`${CURRENT}-${String(dayOffset).padStart(2, '0')}T22:00:00`);
+    const se = new Date(ss.getTime() + schedMins * 60000);
+    const as = new Date(ss.getTime());
+    const ae = new Date(as.getTime() + actMins * 60000);
+    const { status, exceededByMinutes } = maintenanceStatus(ss, se, as, ae);
+    await prisma.maintenanceActivity.create({
+      data: {
+        title,
+        employeeId: emp.id,
+        scheduledStart: ss,
+        scheduledEnd: se,
+        actualStart: as,
+        actualEnd: ae,
+        status,
+        exceededByMinutes,
+        month: toPeriod(ss),
+      },
+    });
+  }
+
+  // Bulk maintenance activities for roughly half of the additional employees.
+  const MAINT_TITLES = [
+    'Node reboot', 'Patch rollout', 'Backup verification', 'Index rebuild',
+    'Cache flush', 'Cert rotation', 'Log cleanup', 'Failover drill',
+  ];
+  for (let m = 0; m < extraEmployees.length; m++) {
+    if (m % 2 !== 0) continue;
+    const emp = extraEmployees[m];
+    const title = MAINT_TITLES[m % MAINT_TITLES.length];
+    const schedMins = randInt(30, 90);
+    const actMins = Math.max(5, schedMins + (rand() < 0.3 ? randInt(10, 60) : randInt(-5, 5)));
+    const day = (m % 27) + 1;
+    const ss = new Date(`${CURRENT}-${String(day).padStart(2, '0')}T22:00:00`);
     const se = new Date(ss.getTime() + schedMins * 60000);
     const as = new Date(ss.getTime());
     const ae = new Date(as.getTime() + actMins * 60000);
@@ -268,6 +322,31 @@ async function main() {
     { product: 'VNA', caseNo: '12460101', day: 5, period: PREVIOUS, handler: cara, owner: dan, call: mk(7), case: mk(13, [], [4, 9, 11]), escalation: false },
     { product: 'PACS', caseNo: '12460155', day: 8, period: PREVIOUS, handler: dan, owner: ben, call: mk(7, [1, 5]), case: mk(13, [7, 10]), escalation: true, findings: 'Multiple documentation gaps.', actionPlan: 'Re-training scheduled.' },
   ];
+
+  // Bulk Call & Case QC evaluations across the additional employees (both periods).
+  const PRODUCTS = ['VNA', 'PACS'];
+  let caseSeq = 12480000;
+  for (let i = 0; i < extraEmployees.length; i++) {
+    const handler = extraEmployees[i];
+    const owner = extraEmployees[(i + 3) % extraEmployees.length];
+    for (const period of [CURRENT, PREVIOUS]) {
+      const noCall = rand() < 0.35 ? [randInt(0, 6)] : [];
+      const noCase = rand() < 0.3 ? [randInt(0, 12)] : [];
+      const naCase = rand() < 0.5 ? [randInt(0, 12)] : [];
+      qcEvals.push({
+        product: PRODUCTS[i % PRODUCTS.length],
+        caseNo: String(caseSeq++),
+        day: (i % 27) + 1,
+        period,
+        handler,
+        owner,
+        call: mk(7, noCall),
+        case: mk(13, noCase, naCase),
+        escalation: rand() < 0.2,
+      });
+    }
+  }
+
   const srCounter: Record<string, number> = {};
   const nextSr = (period: string, kind: string) => {
     const key = `${kind}:${period}`;
@@ -354,6 +433,9 @@ async function main() {
       { email: 'admin@example.com', passwordHash: hash('admin123'), role: 'Admin' },
       { email: 'qalead@example.com', passwordHash: hash('qalead123'), role: 'QA Lead' },
       { email: 'analyst@example.com', passwordHash: hash('analyst123'), role: 'Call QA Analyst' },
+      { email: 'maintenance@example.com', passwordHash: hash('maint123'), role: 'Maintenance' },
+      { email: 'time@example.com', passwordHash: hash('time123'), role: 'Time Analyst' },
+      { email: 'trainee@example.com', passwordHash: hash('trainee123'), role: 'Trainee' },
       { email: 'member@example.com', passwordHash: hash('member123'), role: 'Team Member' },
     ],
   });
@@ -373,7 +455,7 @@ async function main() {
 
   // eslint-disable-next-line no-console
   console.log('Seed complete:', {
-    employees: employees.length,
+    employees: allEmployees.length,
     period: CURRENT,
   });
 }

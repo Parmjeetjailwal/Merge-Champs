@@ -3,13 +3,6 @@ import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { apiError } from '../api';
 
-const DEV_LOGINS: [string, string, string][] = [
-  ['Admin', 'admin@example.com', 'admin123'],
-  ['QA Lead', 'qalead@example.com', 'qalead123'],
-  ['Call QA Analyst', 'analyst@example.com', 'analyst123'],
-  ['Team Member', 'member@example.com', 'member123'],
-];
-
 export function Login() {
   const { login } = useAuth();
   const [email, setEmail] = useState('admin@example.com');
@@ -68,17 +61,6 @@ export function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
-
-        <p className="muted" style={{ fontSize: 12, marginTop: 18, marginBottom: 7 }}>
-          Quick dev login
-        </p>
-        <div className="dev-logins">
-          {DEV_LOGINS.map(([label, em, pw]) => (
-            <button key={em} className="btn secondary sm" disabled={busy} onClick={() => doLogin(em, pw)}>
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );
